@@ -23,6 +23,11 @@ class Settings(BaseSettings):
     
     # CORS
     frontend_url: str = "http://localhost:3000"
+
+    # Optional provider fallback (Alpaca Data API)
+    alpaca_api_key: str = ""
+    alpaca_secret_key: str = ""
+    alpaca_data_base_url: str = "https://data.alpaca.markets"
     
     @property
     def debug(self) -> bool:

@@ -31,6 +31,9 @@ services:
       DATABASE_URL: postgresql+asyncpg://screener_user:screener_password_dev@postgres:5432/market_screener
       PYTHONUNBUFFERED: 1
       ENVIRONMENT: development
+      ALPACA_API_KEY: ${ALPACA_API_KEY:-}
+      ALPACA_SECRET_KEY: ${ALPACA_SECRET_KEY:-}
+      ALPACA_DATA_BASE_URL: ${ALPACA_DATA_BASE_URL:-https://data.alpaca.markets}
     depends_on:
       postgres:
         condition: service_healthy

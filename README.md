@@ -71,6 +71,9 @@ POSTGRES_PORT=5432
 DATABASE_URL=postgresql+asyncpg://screener_user:screener_password_dev@postgres:5432/market_screener
 PYTHONUNBUFFERED=1
 ENVIRONMENT=development
+ALPACA_API_KEY=
+ALPACA_SECRET_KEY=
+ALPACA_DATA_BASE_URL=https://data.alpaca.markets
 
 # Frontend
 VITE_API_URL=http://localhost:8000/api/v1
@@ -175,6 +178,14 @@ GET  /api/v1/ai/analyze/{ticker}      # Get AI analysis for a stock
 GET  /api/v1/presets                  # Get screening presets
 GET  /api/v1/saved-screens            # Get user's saved screens
 POST /api/v1/saved-screens            # Create and save a screen
+POST /api/v1/admin/refresh-yahoo      # Force refresh (Yahoo first, Alpaca fallback if configured)
+
+### External Data Providers
+
+- Primary provider: Yahoo Finance (no key required)
+- Fallback provider: Alpaca Data API (optional key-based)
+
+If Yahoo is rate-limited and Alpaca credentials are configured, the backend attempts Alpaca fallback automatically.
 ```
 
 ## Development

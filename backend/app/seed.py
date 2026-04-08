@@ -7,6 +7,8 @@ import logging
 from sqlalchemy import delete, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.alpaca_finance import fetch_all_stocks_from_alpaca
+from app.config import settings
 from app.models import Stock
 from app.yahoo_finance import fetch_all_stocks
 
@@ -274,9 +276,7 @@ async def refresh_stocks_from_yahoo(
             select(func.count(Stock.id)).where(
                 or_(
                     Stock.price <= 0,
-                    Stock.market_cap <= 0,
                     Stock.price.is_(None),
-                    Stock.market_cap.is_(None),
                 )
             )
         )
@@ -292,8 +292,21 @@ async def refresh_stocks_from_yahoo(
             false_before,
         )
 
+    source = "yahoo"
     yahoo_payloads = await fetch_all_stocks(min_valid=min_required)
     valid_payloads = [p for p in yahoo_payloads if not _is_false_stat_payload(p)]
+
+    if len(valid_payloads) < min_required and settings.alpaca_api_key and settings.alpaca_secret_key:
+        logger.warning(
+            "⚠️ Yahoo returned %s valid rows (<%s), trying Alpaca fallback",
+            len(valid_payloads),
+            min_required,
+        )
+        alpaca_payloads = await fetch_all_stocks_from_alpaca(min_valid=min_required)
+        alpaca_valid = [p for p in alpaca_payloads if not _is_false_stat_payload(p)]
+        if len(alpaca_valid) >= len(valid_payloads):
+            valid_payloads = alpaca_valid
+            source = "alpaca"
 
     if len(valid_payloads) < min_required:
         logger.warning(
@@ -309,6 +322,7 @@ async def refresh_stocks_from_yahoo(
             "min_required": min_required,
             "fetched": len(yahoo_payloads),
             "valid": len(valid_payloads),
+            "source": source,
             "total_before": total_before,
             "total_after": total_after,
             "false_before": false_before,
@@ -326,6 +340,7 @@ async def refresh_stocks_from_yahoo(
         "wiped_for_false_stats": wiped_for_false_stats,
         "fetched": len(yahoo_payloads),
         "valid": len(valid_payloads),
+        "source": source,
         "total_before": total_before,
         "total_after": total_after,
         "false_before": false_before,
