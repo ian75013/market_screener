@@ -1,6 +1,6 @@
 # Market Screener
 
-AI-powered stock screening API with PostgreSQL backend and React frontend. Zone Bourse augmenté par IA.
+AI-powered stock screening API with PostgreSQL backend and React frontend. Screener AI augmented.
 
 ## Features
 
@@ -428,16 +428,10 @@ docker stack deploy -c docker-compose.yml market-screener
 
 ## License
 
-MIT License - See LICENSE file for details
+Proprietary License - Copyright (c) Doctum Consilium. All rights reserved.
+
+See LICENSE for full terms.
 
 ## Support & Issues
 
 Report issues, request features, or ask questions on the project repository.
-
-- le `docker-compose.yml` racine démarre backend + frontend ensemble
-- le frontend appelle l'API via `/api`, proxifié vers le backend Docker
-- la base SQLite persiste dans `backend/data/`
-
-## Remarque
-
-Ton frontend reste en mode développement Vite dans Docker pour garder le hot reload. Pour une version production, on pourra ensuite le builder et le servir via Nginx.
