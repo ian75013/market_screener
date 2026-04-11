@@ -1,7 +1,4 @@
 services:
-  postgres:
-
-
   backend:
     image: market-screener/backend:ovh
     environment:
@@ -23,21 +20,19 @@ services:
       FUNDAMENTALS_ONLY_MISSING: ${FUNDAMENTALS_ONLY_MISSING:-true}
     command: uvicorn app.main:app --host 0.0.0.0 --port 8000
 
-
   frontend:
     image: market-screener/frontend:ovh
     build:
       args:
         VITE_API_URL: ${VITE_API_URL:-http://127.0.0.1:18000/api/v1}
 
-
   airflow-scheduler:
     healthcheck:
       test: ["CMD-SHELL", "airflow jobs check --job-type SchedulerJob --hostname \"$$HOSTNAME\""]
       interval: 30s
       timeout: 10s
-      retries: 5
-      start_period: 60s
+        retries: 5
+        start_period: 60s
 
   airflow-webserver:
     healthcheck:
