@@ -20,6 +20,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.alpaca_finance import fetch_all_stocks_from_alpaca
 from app.config import settings
+from app.finnhub_fallback import fetch_all_stocks_from_finnhub
 from app.models import Stock
 from app.seed import _is_false_stat_payload
 from app.yahoo_finance import STOCK_UNIVERSE, fetch_all_stocks
@@ -195,6 +196,29 @@ async def _fetch_provider_with_retries(
                     provider_retry_delay_seconds,
                 )
                 await asyncio.sleep(provider_retry_delay_seconds)
+
+    # Final fallback: Finnhub (free tier, current quotes only)
+    # When both Yahoo and Alpaca have failed, use Finnhub to get at least current prices
+    if len(by_ticker) < fetch_min_valid:
+        logger.info("⏳ Yahoo and Alpaca insufficient, trying Finnhub fallback...")
+        try:
+            finnhub_payloads = await fetch_all_stocks_from_finnhub(min_valid=fetch_min_valid)
+            finnhub_payloads = _filter_by_region(finnhub_payloads, region_key)
+            for payload in finnhub_payloads:
+                ticker = payload.get("ticker")
+                if ticker and ticker not in by_ticker:  # Don't overwrite Yahoo/Alpaca data
+                    by_ticker[ticker] = payload
+            
+            if by_ticker:
+                source = "finnhub"
+                attempts += 1
+                logger.info(
+                    "✅ Finnhub fallback collected %s stocks (total: %s)",
+                    len(finnhub_payloads),
+                    len(by_ticker),
+                )
+        except Exception as exc:
+            logger.warning("⚠️ Finnhub fallback failed: %s", exc)
 
     return source, list(by_ticker.values()), attempts
 

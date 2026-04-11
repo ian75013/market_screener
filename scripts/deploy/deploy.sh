@@ -171,7 +171,7 @@ deploy_vps_docker() {
   local ssh_port="${SSH_PORT:-22}"
   local app_dir="${APP_DIR:-/opt/market-screener}"
   local git_repo="${GIT_REPO:-}"
-  local git_branch="${GIT_BRANCH:-main}"
+  local git_branch="${GIT_BRANCH:-}"
   local auto_port_remap="${AUTO_PORT_REMAP:-false}"
   local sudo_password="${SUDO_PASSWORD:-}"
   local postgres_bind_host="${POSTGRES_BIND_HOST:-127.0.0.1}"
@@ -192,6 +192,14 @@ deploy_vps_docker() {
   [ -n "$ssh_host" ] || die "SSH_HOST is required"
   if [ -z "$git_repo" ] && command -v git >/dev/null 2>&1; then
     git_repo="$(git -C "$ROOT_DIR" remote get-url origin 2>/dev/null || true)"
+  fi
+
+  if [ -z "$git_branch" ] && command -v git >/dev/null 2>&1; then
+    git_branch="$(git -C "$ROOT_DIR" rev-parse --abbrev-ref HEAD 2>/dev/null || true)"
+  fi
+
+  if [ -z "$git_branch" ] || [ "$git_branch" = "HEAD" ]; then
+    git_branch="main"
   fi
 
   [ -n "$git_repo" ] || die "GIT_REPO is required (or set a valid origin remote)"

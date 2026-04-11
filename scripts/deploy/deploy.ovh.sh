@@ -38,6 +38,10 @@ if [ -z "${AUTO_CERTBOT_ONCE+x}" ] && [ -n "${CERTBOT_AUTOCONFIG:-}" ]; then
   AUTO_CERTBOT_ONCE="${CERTBOT_AUTOCONFIG}"
 fi
 
+if [ -z "${AUTO_CERTBOT_ONCE+x}" ]; then
+  AUTO_CERTBOT_ONCE=true
+fi
+
 if [ -n "${SUDO_PASSWORD:-}" ] && [ "${ALLOW_PLAINTEXT_SUDO_PASSWORD:-false}" != "true" ]; then
   echo "[deploy-ovh][error] Refusing plaintext SUDO_PASSWORD from env file." >&2
   echo "[deploy-ovh][error] Use ASK_SUDO_PASSWORD=true (recommended), or set ALLOW_PLAINTEXT_SUDO_PASSWORD=true explicitly." >&2
@@ -163,7 +167,7 @@ configure_nginx() {
   local sudo_password="${SUDO_PASSWORD:-}"
   local backend_host_port="${BACKEND_HOST_PORT:-18000}"
   local frontend_host_port="${FRONTEND_HOST_PORT:-13000}"
-  local letsencrypt_email="${LETSENCRYPT_EMAIL:-${CADDY_EMAIL:-}}"
+  local letsencrypt_email="${LETSENCRYPT_EMAIL:-${CERTBOT_EMAIL:-${CADDY_EMAIL:-}}}"
   local auto_certbot_once="${AUTO_CERTBOT_ONCE:-true}"
   local force_http_only="${FORCE_HTTP_ONLY:-false}"
   local apache_ssl_fallback_domain="${APACHE_SSL_FALLBACK_DOMAIN:-}"
@@ -262,6 +266,20 @@ fi
 SITE_HTTP="/etc/apache2/sites-available/000-market-screener.conf"
 SITE_SSL="/etc/apache2/sites-available/000-market-screener-ssl.conf"
 
+repair_apache_permissions() {
+  run_sudo find /etc/apache2/sites-available -maxdepth 1 -type f -name '*.conf' -exec chmod 644 {} + >/dev/null 2>&1 || true
+  local enabled_site resolved_target
+  for enabled_site in /etc/apache2/sites-enabled/*.conf; do
+    [ -e "$enabled_site" ] || continue
+    resolved_target="$(readlink -f "$enabled_site" 2>/dev/null || true)"
+    [ -n "$resolved_target" ] || continue
+    run_sudo test -f "$resolved_target" || continue
+    run_sudo chmod 644 "$resolved_target" >/dev/null 2>&1 || true
+  done
+}
+
+repair_apache_permissions
+
 disable_conflicting_sites() {
   local domain="$1"
   local site
@@ -287,6 +305,7 @@ run_sudo a2disconf market-screener-proxy >/dev/null 2>&1 || true
 run_sudo a2dissite market-screener >/dev/null 2>&1 || true
 run_sudo a2dissite market-screener-ssl >/dev/null 2>&1 || true
 run_sudo a2ensite 000-market-screener >/dev/null
+repair_apache_permissions
 run_sudo apache2ctl configtest
 run_sudo systemctl reload apache2
 
@@ -347,17 +366,35 @@ else
 fi
 
 if [ "$api_cert_ok" != "true" ] || [ "$app_cert_ok" != "true" ]; then
-  if [ "${AUTO_CERTBOT_ONCE:-true}" = "true" ]; then
-    marker_file="/etc/letsencrypt/.market-screener-certbot-bootstrap.done"
-    if ! run_sudo test -f "$marker_file"; then
-      if [ -n "${LETSENCRYPT_EMAIL:-}" ]; then
-        run_sudo apt-get update
-        run_sudo apt-get install -y certbot python3-certbot-apache
-        run_sudo certbot certonly --apache -d "$API_DOMAIN" -m "$LETSENCRYPT_EMAIL" --agree-tos --no-eff-email -n || true
-        run_sudo certbot certonly --apache -d "$APP_DOMAIN" -m "$LETSENCRYPT_EMAIL" --agree-tos --no-eff-email -n || true
-      else
-        echo "[deploy-ovh] LETSENCRYPT_EMAIL is empty; skipping certbot bootstrap." >&2
+  if [ "${AUTO_CERTBOT_ONCE:-true}" = "true" ] && [ "${FORCE_HTTP_ONLY:-false}" != "true" ]; then
+    if [ -n "${LETSENCRYPT_EMAIL:-}" ]; then
+      run_sudo apt-get update
+      run_sudo apt-get install -y certbot python3-certbot-apache
+      repair_apache_permissions
+      if ! run_sudo certbot certonly --apache \
+        --non-interactive \
+        --agree-tos \
+        --no-eff-email \
+        -m "$LETSENCRYPT_EMAIL" \
+        -d "$API_DOMAIN" \
+        -d "$APP_DOMAIN" \
+        --expand
+      then
+        echo "[deploy-ovh] Certbot certonly failed for ${API_DOMAIN},${APP_DOMAIN}; retrying with certbot --apache." >&2
+        if ! run_sudo certbot --apache \
+          --non-interactive \
+          --agree-tos \
+          --no-eff-email \
+          --redirect \
+          -m "$LETSENCRYPT_EMAIL" \
+          -d "$API_DOMAIN" \
+          -d "$APP_DOMAIN"
+        then
+          echo "[deploy-ovh] Certbot auto-issue failed for ${API_DOMAIN},${APP_DOMAIN}; keeping HTTP fallback." >&2
+        fi
       fi
+    else
+      echo "[deploy-ovh] LETSENCRYPT_EMAIL/CERTBOT_EMAIL is empty; skipping certbot bootstrap." >&2
     fi
   fi
 fi
@@ -373,20 +410,12 @@ else
   app_cert_ok=false
 fi
 
-if [ "${AUTO_CERTBOT_ONCE:-true}" = "true" ]; then
-  marker_file="/etc/letsencrypt/.market-screener-certbot-bootstrap.done"
-  if ! run_sudo test -f "$marker_file"; then
-    if [ "$api_cert_ok" = "true" ] && [ "$app_cert_ok" = "true" ]; then
-      run_sudo touch "$marker_file"
-    fi
-  fi
-fi
-
 if [ "${FORCE_HTTP_ONLY:-false}" = "true" ]; then
   run_sudo install -m 644 "$TMP_REMOTE_APACHE_CONF" "$SITE_HTTP"
   run_sudo a2dissite market-screener-ssl >/dev/null 2>&1 || true
   run_sudo a2dissite 000-market-screener-ssl >/dev/null 2>&1 || true
   run_sudo a2ensite 000-market-screener >/dev/null
+  repair_apache_permissions
   run_sudo apache2ctl configtest
   run_sudo systemctl reload apache2
   echo "[deploy-ovh] HTTPS disabled by FORCE_HTTP_ONLY=true; Apache configured in HTTP mode." >&2
@@ -436,6 +465,7 @@ EOF_SSL
   rm -f "$ssl_tmp"
   run_sudo a2ensite 000-market-screener >/dev/null
   run_sudo a2ensite 000-market-screener-ssl >/dev/null
+  repair_apache_permissions
   run_sudo apache2ctl configtest
   run_sudo systemctl reload apache2
   echo "[deploy-ovh] Apache SSL site enabled for Market Screener domains." >&2
@@ -444,6 +474,7 @@ else
   run_sudo a2dissite market-screener-ssl >/dev/null 2>&1 || true
   run_sudo a2dissite 000-market-screener-ssl >/dev/null 2>&1 || true
   run_sudo a2ensite 000-market-screener >/dev/null
+  repair_apache_permissions
   run_sudo apache2ctl configtest
   run_sudo systemctl reload apache2
   echo "[deploy-ovh] Apache SSL site skipped: certificates are not available yet." >&2
