@@ -2,6 +2,9 @@ FROM node:20-alpine AS builder
 
 WORKDIR /app
 
+ARG VITE_API_URL=http://localhost:8000/api/v1
+ENV VITE_API_URL=${VITE_API_URL}
+
 # Clean slate: remove any existing node_modules and lock files
 RUN rm -rf node_modules package-lock.json
 

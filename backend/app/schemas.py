@@ -36,6 +36,8 @@ class ScreenRequest(BaseModel):
     # ── Categorical filters
     country: Optional[str] = None
     countries: Optional[list[str]] = None  # multi-select
+    region: Optional[str] = None
+    regions: Optional[list[str]] = None
     sector: Optional[str] = None
     sectors: Optional[list[str]] = None
     market_index: Optional[str] = None
@@ -88,8 +90,12 @@ class ScreenRequest(BaseModel):
     change_1d: Optional[RangeFilter] = None
     change_1w: Optional[RangeFilter] = None
     change_1m: Optional[RangeFilter] = None
+    change_3m: Optional[RangeFilter] = None
+    change_6m: Optional[RangeFilter] = None
     change_ytd: Optional[RangeFilter] = None
     change_1y: Optional[RangeFilter] = None
+    dist_52w_high: Optional[RangeFilter] = None
+    dist_52w_low: Optional[RangeFilter] = None
 
     # ── Range filters (analystes & ESG)
     analyst_rating: Optional[RangeFilter] = None
@@ -100,6 +106,13 @@ class ScreenRequest(BaseModel):
     ai_score_overall: Optional[RangeFilter] = None
     ai_score_fundamental: Optional[RangeFilter] = None
     ai_score_technical: Optional[RangeFilter] = None
+
+    # ── Boolean and category helpers (TradingView-like)
+    above_mm50: Optional[bool] = None
+    above_mm200: Optional[bool] = None
+    near_52w_high: Optional[bool] = None  # <= 5% from 52w high
+    near_52w_low: Optional[bool] = None   # <= 5% from 52w low
+    market_cap_bucket: Optional[str] = None
 
     # ── Sorting & Pagination
     sort_by: str = Field(default="market_cap", description="Column to sort by")

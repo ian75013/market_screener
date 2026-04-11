@@ -1,19 +1,17 @@
-version: "3.9"
-
 services:
   postgres:
     image: postgres:16-alpine
     container_name: market-screener-postgres
     environment:
-      POSTGRES_DB: market_screener
-      POSTGRES_USER: screener_user
-      POSTGRES_PASSWORD: screener_password_dev
+      POSTGRES_DB: ${POSTGRES_DB:-market_screener}
+      POSTGRES_USER: ${POSTGRES_USER:-screener_user}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-screener_password_dev}
     volumes:
       - postgres_data:/var/lib/postgresql/data
     ports:
       - "5432:5432"
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U screener_user -d market_screener"]
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-screener_user} -d ${POSTGRES_DB:-market_screener}"]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -28,12 +26,32 @@ services:
       dockerfile: Dockerfile
     container_name: market-screener-backend
     environment:
-      DATABASE_URL: postgresql+asyncpg://screener_user:screener_password_dev@postgres:5432/market_screener
+      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-screener_user}:${POSTGRES_PASSWORD:-screener_password_dev}@${POSTGRES_HOST:-postgres}:${POSTGRES_PORT:-5432}/${POSTGRES_DB:-market_screener}
+      POSTGRES_DB: ${POSTGRES_DB:-market_screener}
+      POSTGRES_USER: ${POSTGRES_USER:-screener_user}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-screener_password_dev}
+      POSTGRES_HOST: ${POSTGRES_HOST:-postgres}
+      POSTGRES_PORT: ${POSTGRES_PORT:-5432}
       PYTHONUNBUFFERED: 1
       ENVIRONMENT: development
       ALPACA_API_KEY: ${ALPACA_API_KEY:-}
       ALPACA_SECRET_KEY: ${ALPACA_SECRET_KEY:-}
       ALPACA_DATA_BASE_URL: ${ALPACA_DATA_BASE_URL:-https://data.alpaca.markets}
+      STARTUP_MIN_REQUIRED: ${STARTUP_MIN_REQUIRED:-8}
+      STARTUP_FETCH_MIN_VALID: ${STARTUP_FETCH_MIN_VALID:-40}
+      STARTUP_PROVIDER_RETRIES: ${STARTUP_PROVIDER_RETRIES:-3}
+      STARTUP_PROVIDER_RETRY_DELAY_SECONDS: ${STARTUP_PROVIDER_RETRY_DELAY_SECONDS:-3.0}
+      STARTUP_INCLUDE_ALPACA_FALLBACK: ${STARTUP_INCLUDE_ALPACA_FALLBACK:-true}
+      STARTUP_ENABLE_TECHNICAL_FALLBACK: ${STARTUP_ENABLE_TECHNICAL_FALLBACK:-true}
+      STARTUP_TOPUP_ROUNDS: ${STARTUP_TOPUP_ROUNDS:-6}
+      STARTUP_TOPUP_INTERVAL_SECONDS: ${STARTUP_TOPUP_INTERVAL_SECONDS:-60}
+      FUNDAMENTALS_ENABLED: ${FUNDAMENTALS_ENABLED:-true}
+      FUNDAMENTALS_BOOTSTRAP_ROUNDS: ${FUNDAMENTALS_BOOTSTRAP_ROUNDS:-8}
+      FUNDAMENTALS_BOOTSTRAP_INITIAL_DELAY_SECONDS: ${FUNDAMENTALS_BOOTSTRAP_INITIAL_DELAY_SECONDS:-300}
+      FUNDAMENTALS_BOOTSTRAP_INTERVAL_SECONDS: ${FUNDAMENTALS_BOOTSTRAP_INTERVAL_SECONDS:-120}
+      FUNDAMENTALS_MAINTENANCE_INTERVAL_SECONDS: ${FUNDAMENTALS_MAINTENANCE_INTERVAL_SECONDS:-1800}
+      FUNDAMENTALS_ROUND_LIMIT: ${FUNDAMENTALS_ROUND_LIMIT:-120}
+      FUNDAMENTALS_ONLY_MISSING: ${FUNDAMENTALS_ONLY_MISSING:-true}
     depends_on:
       postgres:
         condition: service_healthy
@@ -42,10 +60,10 @@ services:
     command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
-      interval: 30s
+      interval: 15s
       timeout: 10s
-      retries: 3
-      start_period: 30s
+      retries: 8
+      start_period: 20s
     restart: unless-stopped
     networks:
       - market-screener-network
@@ -54,6 +72,8 @@ services:
     build:
       context: ./frontend
       dockerfile: Dockerfile
+      args:
+        VITE_API_URL: ${VITE_API_URL:-http://localhost:8000/api/v1}
     container_name: market-screener-frontend
     depends_on:
       backend:
@@ -72,8 +92,125 @@ services:
     networks:
       - market-screener-network
 
+  airflow-init:
+    image: apache/airflow:2.10.5-python3.12
+    container_name: market-screener-airflow-init
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      AIRFLOW__CORE__EXECUTOR: LocalExecutor
+      AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://${POSTGRES_USER:-screener_user}:${POSTGRES_PASSWORD:-screener_password_dev}@${POSTGRES_HOST:-postgres}:${POSTGRES_PORT:-5432}/${POSTGRES_DB:-market_screener}
+      AIRFLOW__CORE__FERNET_KEY: ""
+      AIRFLOW__CORE__LOAD_EXAMPLES: "False"
+      AIRFLOW__WEBSERVER__RBAC: "True"
+      AIRFLOW_UID: ${AIRFLOW_UID:-50000}
+      AIRFLOW_INTRADAY_CRON: ${AIRFLOW_INTRADAY_CRON:-*/30 6-22 * * 1-5}
+      AIRFLOW_INTRADAY_MIN_REQUIRED: ${AIRFLOW_INTRADAY_MIN_REQUIRED:-8}
+      AIRFLOW_INTRADAY_FETCH_MIN_VALID: ${AIRFLOW_INTRADAY_FETCH_MIN_VALID:-24}
+      AIRFLOW_INTRADAY_PROVIDER_RETRIES: ${AIRFLOW_INTRADAY_PROVIDER_RETRIES:-2}
+      AIRFLOW_INTRADAY_PROVIDER_RETRY_DELAY_SECONDS: ${AIRFLOW_INTRADAY_PROVIDER_RETRY_DELAY_SECONDS:-2}
+      AIRFLOW_NIGHTLY_CRON: ${AIRFLOW_NIGHTLY_CRON:-15 2 * * 1-5}
+      AIRFLOW_NIGHTLY_MIN_REQUIRED: ${AIRFLOW_NIGHTLY_MIN_REQUIRED:-20}
+      AIRFLOW_NIGHTLY_FETCH_MIN_VALID: ${AIRFLOW_NIGHTLY_FETCH_MIN_VALID:-50}
+      AIRFLOW_NIGHTLY_PROVIDER_RETRIES: ${AIRFLOW_NIGHTLY_PROVIDER_RETRIES:-4}
+      AIRFLOW_NIGHTLY_PROVIDER_RETRY_DELAY_SECONDS: ${AIRFLOW_NIGHTLY_PROVIDER_RETRY_DELAY_SECONDS:-3}
+      AIRFLOW_ADMIN_USERNAME: ${AIRFLOW_ADMIN_USERNAME:-admin}
+      AIRFLOW_ADMIN_PASSWORD: ${AIRFLOW_ADMIN_PASSWORD:-admin}
+      AIRFLOW_ADMIN_FIRSTNAME: ${AIRFLOW_ADMIN_FIRSTNAME:-Market}
+      AIRFLOW_ADMIN_LASTNAME: ${AIRFLOW_ADMIN_LASTNAME:-Screener}
+      AIRFLOW_ADMIN_EMAIL: ${AIRFLOW_ADMIN_EMAIL:-admin@local.dev}
+    command:
+      - bash
+      - -ec
+      - |
+        airflow db migrate
+        if airflow users list | awk 'NR>2 {print $1}' | grep -Fxq "${AIRFLOW_ADMIN_USERNAME}"; then
+          echo "Airflow user ${AIRFLOW_ADMIN_USERNAME} already exists; skipping creation"
+        else
+          airflow users create \
+            --username "${AIRFLOW_ADMIN_USERNAME}" \
+            --password "${AIRFLOW_ADMIN_PASSWORD}" \
+            --firstname "${AIRFLOW_ADMIN_FIRSTNAME}" \
+            --lastname "${AIRFLOW_ADMIN_LASTNAME}" \
+            --role Admin \
+            --email "${AIRFLOW_ADMIN_EMAIL}"
+        fi
+    user: "${AIRFLOW_UID:-50000}:0"
+    volumes:
+      - ./airflow/dags:/opt/airflow/dags
+      - airflow_logs:/opt/airflow/logs
+    networks:
+      - market-screener-network
+
+  airflow-scheduler:
+    image: apache/airflow:2.10.5-python3.12
+    container_name: market-screener-airflow-scheduler
+    depends_on:
+      postgres:
+        condition: service_healthy
+      airflow-init:
+        condition: service_completed_successfully
+      backend:
+        condition: service_healthy
+    environment:
+      AIRFLOW__CORE__EXECUTOR: LocalExecutor
+      AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://${POSTGRES_USER:-screener_user}:${POSTGRES_PASSWORD:-screener_password_dev}@${POSTGRES_HOST:-postgres}:${POSTGRES_PORT:-5432}/${POSTGRES_DB:-market_screener}
+      AIRFLOW__CORE__FERNET_KEY: ""
+      AIRFLOW__CORE__LOAD_EXAMPLES: "False"
+      AIRFLOW__WEBSERVER__RBAC: "True"
+      AIRFLOW_UID: ${AIRFLOW_UID:-50000}
+      AIRFLOW_INTRADAY_CRON: ${AIRFLOW_INTRADAY_CRON:-*/30 6-22 * * 1-5}
+      AIRFLOW_INTRADAY_MIN_REQUIRED: ${AIRFLOW_INTRADAY_MIN_REQUIRED:-8}
+      AIRFLOW_INTRADAY_FETCH_MIN_VALID: ${AIRFLOW_INTRADAY_FETCH_MIN_VALID:-24}
+      AIRFLOW_INTRADAY_PROVIDER_RETRIES: ${AIRFLOW_INTRADAY_PROVIDER_RETRIES:-2}
+      AIRFLOW_INTRADAY_PROVIDER_RETRY_DELAY_SECONDS: ${AIRFLOW_INTRADAY_PROVIDER_RETRY_DELAY_SECONDS:-2}
+      AIRFLOW_NIGHTLY_CRON: ${AIRFLOW_NIGHTLY_CRON:-15 2 * * 1-5}
+      AIRFLOW_NIGHTLY_MIN_REQUIRED: ${AIRFLOW_NIGHTLY_MIN_REQUIRED:-20}
+      AIRFLOW_NIGHTLY_FETCH_MIN_VALID: ${AIRFLOW_NIGHTLY_FETCH_MIN_VALID:-50}
+      AIRFLOW_NIGHTLY_PROVIDER_RETRIES: ${AIRFLOW_NIGHTLY_PROVIDER_RETRIES:-4}
+      AIRFLOW_NIGHTLY_PROVIDER_RETRY_DELAY_SECONDS: ${AIRFLOW_NIGHTLY_PROVIDER_RETRY_DELAY_SECONDS:-3}
+    command: scheduler
+    user: "${AIRFLOW_UID:-50000}:0"
+    restart: unless-stopped
+    volumes:
+      - ./airflow/dags:/opt/airflow/dags
+      - airflow_logs:/opt/airflow/logs
+    networks:
+      - market-screener-network
+
+  airflow-webserver:
+    image: apache/airflow:2.10.5-python3.12
+    container_name: market-screener-airflow-webserver
+    depends_on:
+      postgres:
+        condition: service_healthy
+      airflow-init:
+        condition: service_completed_successfully
+      airflow-scheduler:
+        condition: service_started
+    environment:
+      AIRFLOW__CORE__EXECUTOR: LocalExecutor
+      AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://${POSTGRES_USER:-screener_user}:${POSTGRES_PASSWORD:-screener_password_dev}@${POSTGRES_HOST:-postgres}:${POSTGRES_PORT:-5432}/${POSTGRES_DB:-market_screener}
+      AIRFLOW__CORE__FERNET_KEY: ""
+      AIRFLOW__CORE__LOAD_EXAMPLES: "False"
+      AIRFLOW__WEBSERVER__RBAC: "True"
+      AIRFLOW_UID: ${AIRFLOW_UID:-50000}
+    command: webserver
+    user: "${AIRFLOW_UID:-50000}:0"
+    ports:
+      - "${AIRFLOW_BIND_HOST:-127.0.0.1}:${AIRFLOW_PORT:-8088}:8080"
+    restart: unless-stopped
+    volumes:
+      - ./airflow/dags:/opt/airflow/dags
+      - airflow_logs:/opt/airflow/logs
+    networks:
+      - market-screener-network
+
 volumes:
   postgres_data:
+    driver: local
+  airflow_logs:
     driver: local
 
 networks:

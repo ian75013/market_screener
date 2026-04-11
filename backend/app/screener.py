@@ -8,6 +8,22 @@ from app.models import Stock
 from app.schemas import ScreenRequest, RangeFilter
 
 
+REGION_COUNTRIES = {
+    "north_america": ["USA", "Canada"],
+    "europe": ["France", "Allemagne", "UK", "Suisse", "Pays-Bas", "Italie", "Espagne", "Danemark"],
+    "asia_pacific": ["Japon", "Corée du Sud", "Inde", "Australie", "Taïwan"],
+    "world": [],
+}
+
+MARKET_CAP_BUCKETS_BN = {
+    "micro": (0.0, 0.3),
+    "small": (0.3, 2.0),
+    "mid": (2.0, 10.0),
+    "large": (10.0, 200.0),
+    "mega": (200.0, None),
+}
+
+
 # ── Column mapping: schema field → ORM column ───────────────────────────────
 
 SORT_COLUMNS = {
@@ -101,6 +117,8 @@ RANGE_FILTERS = {
     "change_1d": Stock.change_1d,
     "change_1w": Stock.change_1w,
     "change_1m": Stock.change_1m,
+    "change_3m": Stock.change_3m,
+    "change_6m": Stock.change_6m,
     "change_ytd": Stock.change_ytd,
     "change_1y": Stock.change_1y,
     "analyst_rating": Stock.analyst_rating,
@@ -109,6 +127,14 @@ RANGE_FILTERS = {
     "ai_score_overall": Stock.ai_score_overall,
     "ai_score_fundamental": Stock.ai_score_fundamental,
     "ai_score_technical": Stock.ai_score_technical,
+}
+
+DERIVED_RANGE_FILTERS = {
+    # Distance to 52w high/low in percent.
+    # dist_52w_high: 0 means at high; 10 means 10% below high.
+    "dist_52w_high": ((Stock.high_52w - Stock.price) / func.nullif(Stock.high_52w, 0)) * 100,
+    # dist_52w_low: 0 means at low; 10 means 10% above low.
+    "dist_52w_low": ((Stock.price - Stock.low_52w) / func.nullif(Stock.low_52w, 0)) * 100,
 }
 
 
@@ -166,12 +192,79 @@ async def screen_stocks(db: AsyncSession, req: ScreenRequest):
         count_query = count_query.where(cond)
         filters_applied += 1
 
+    # Region filter (maps to countries)
+    regions: list[str] = []
+    if req.regions:
+        regions = [r.strip().lower().replace("-", "_") for r in req.regions if r]
+    elif req.region:
+        regions = [req.region.strip().lower().replace("-", "_")]
+
+    if regions:
+        allowed_countries: set[str] = set()
+        for region in regions:
+            if region in REGION_COUNTRIES and region != "world":
+                allowed_countries.update(REGION_COUNTRIES[region])
+        if allowed_countries:
+            cond = Stock.country.in_(sorted(allowed_countries))
+            query = query.where(cond)
+            count_query = count_query.where(cond)
+            filters_applied += 1
+
+    # Market cap buckets in billion USD-equivalent.
+    if req.market_cap_bucket:
+        bucket_key = req.market_cap_bucket.strip().lower()
+        bounds = MARKET_CAP_BUCKETS_BN.get(bucket_key)
+        if bounds:
+            lo, hi = bounds
+            conds = [Stock.market_cap >= lo]
+            if hi is not None:
+                conds.append(Stock.market_cap < hi)
+            cond = and_(*conds)
+            query = query.where(cond)
+            count_query = count_query.where(cond)
+            filters_applied += 1
+
+    if req.above_mm50 is not None:
+        cond = Stock.dist_mm50 >= 0 if req.above_mm50 else Stock.dist_mm50 < 0
+        query = query.where(cond)
+        count_query = count_query.where(cond)
+        filters_applied += 1
+
+    if req.above_mm200 is not None:
+        cond = Stock.dist_mm200 >= 0 if req.above_mm200 else Stock.dist_mm200 < 0
+        query = query.where(cond)
+        count_query = count_query.where(cond)
+        filters_applied += 1
+
+    # Near 52w high/low means distance <= 5%.
+    dist_52w_high_expr = DERIVED_RANGE_FILTERS["dist_52w_high"]
+    dist_52w_low_expr = DERIVED_RANGE_FILTERS["dist_52w_low"]
+
+    if req.near_52w_high is not None:
+        cond = dist_52w_high_expr <= 5 if req.near_52w_high else dist_52w_high_expr > 5
+        query = query.where(cond)
+        count_query = count_query.where(cond)
+        filters_applied += 1
+
+    if req.near_52w_low is not None:
+        cond = dist_52w_low_expr <= 5 if req.near_52w_low else dist_52w_low_expr > 5
+        query = query.where(cond)
+        count_query = count_query.where(cond)
+        filters_applied += 1
+
     # ── Range filters ────────────────────────────────────────────────
     for field_name, column in RANGE_FILTERS.items():
         rf: RangeFilter | None = getattr(req, field_name, None)
         if rf is not None and (rf.min is not None or rf.max is not None):
             query = _apply_range(query, column, rf)
             count_query = _apply_range(count_query, column, rf)
+            filters_applied += 1
+
+    for field_name, expr in DERIVED_RANGE_FILTERS.items():
+        rf: RangeFilter | None = getattr(req, field_name, None)
+        if rf is not None and (rf.min is not None or rf.max is not None):
+            query = _apply_range(query, expr, rf)
+            count_query = _apply_range(count_query, expr, rf)
             filters_applied += 1
 
     # ── Count total before pagination ────────────────────────────────
@@ -248,6 +341,8 @@ async def get_filter_options(db: AsyncSession) -> dict:
         "upside": Stock.upside,
         "esg_score": Stock.esg_score,
         "ai_score_overall": Stock.ai_score_overall,
+        "dist_52w_high": DERIVED_RANGE_FILTERS["dist_52w_high"],
+        "dist_52w_low": DERIVED_RANGE_FILTERS["dist_52w_low"],
     }
 
     ranges = {}

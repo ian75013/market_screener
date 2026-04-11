@@ -1,0 +1,53 @@
+services:
+  postgres:
+    ports:
+      - "${POSTGRES_BIND_HOST:-127.0.0.1}:${POSTGRES_HOST_PORT:-5432}:5432"
+
+  backend:
+    image: market-screener/backend:ovh
+    environment:
+      ENVIRONMENT: production
+      STARTUP_MIN_REQUIRED: ${STARTUP_MIN_REQUIRED:-5}
+      STARTUP_FETCH_MIN_VALID: ${STARTUP_FETCH_MIN_VALID:-25}
+      STARTUP_PROVIDER_RETRIES: ${STARTUP_PROVIDER_RETRIES:-2}
+      STARTUP_PROVIDER_RETRY_DELAY_SECONDS: ${STARTUP_PROVIDER_RETRY_DELAY_SECONDS:-2.0}
+      STARTUP_INCLUDE_ALPACA_FALLBACK: ${STARTUP_INCLUDE_ALPACA_FALLBACK:-true}
+      STARTUP_ENABLE_TECHNICAL_FALLBACK: ${STARTUP_ENABLE_TECHNICAL_FALLBACK:-true}
+      STARTUP_TOPUP_ROUNDS: ${STARTUP_TOPUP_ROUNDS:-8}
+      STARTUP_TOPUP_INTERVAL_SECONDS: ${STARTUP_TOPUP_INTERVAL_SECONDS:-90}
+      FUNDAMENTALS_ENABLED: ${FUNDAMENTALS_ENABLED:-true}
+      FUNDAMENTALS_BOOTSTRAP_ROUNDS: ${FUNDAMENTALS_BOOTSTRAP_ROUNDS:-10}
+      FUNDAMENTALS_BOOTSTRAP_INITIAL_DELAY_SECONDS: ${FUNDAMENTALS_BOOTSTRAP_INITIAL_DELAY_SECONDS:-300}
+      FUNDAMENTALS_BOOTSTRAP_INTERVAL_SECONDS: ${FUNDAMENTALS_BOOTSTRAP_INTERVAL_SECONDS:-120}
+      FUNDAMENTALS_MAINTENANCE_INTERVAL_SECONDS: ${FUNDAMENTALS_MAINTENANCE_INTERVAL_SECONDS:-1800}
+      FUNDAMENTALS_ROUND_LIMIT: ${FUNDAMENTALS_ROUND_LIMIT:-140}
+      FUNDAMENTALS_ONLY_MISSING: ${FUNDAMENTALS_ONLY_MISSING:-true}
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8000
+    ports:
+      - "${BACKEND_BIND_HOST:-127.0.0.1}:${BACKEND_HOST_PORT:-18000}:8000"
+
+  frontend:
+    image: market-screener/frontend:ovh
+    build:
+      args:
+        VITE_API_URL: ${VITE_API_URL:-http://127.0.0.1:18000/api/v1}
+    ports:
+      - "${FRONTEND_BIND_HOST:-127.0.0.1}:${FRONTEND_HOST_PORT:-13000}:3000"
+
+  airflow-scheduler:
+    healthcheck:
+      test: ["CMD-SHELL", "airflow jobs check --job-type SchedulerJob --hostname \"$$HOSTNAME\""]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 60s
+
+  airflow-webserver:
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8080/health')"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 60s
+    ports:
+      - "${AIRFLOW_BIND_HOST:-127.0.0.1}:${AIRFLOW_PORT:-8088}:8080"

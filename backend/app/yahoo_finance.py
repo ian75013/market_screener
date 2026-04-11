@@ -391,19 +391,24 @@ async def fetch_stock_data(ticker_sym: str, meta: tuple) -> Optional[dict]:
     return await loop.run_in_executor(_executor, _fetch_ticker_data, ticker_sym, meta)
 
 
-async def fetch_all_stocks(min_valid: int | None = None) -> list[dict]:
+async def fetch_all_stocks(min_valid: int | None = None, ticker_offset: int = 0) -> list[dict]:
     """
     Fetch real market data from Yahoo Finance using chunked batch requests.
     Chunking + retries improves resilience against Yahoo rate limiting.
     """
+    universe = list(STOCK_UNIVERSE)
+    if universe and ticker_offset:
+        shift = ticker_offset % len(universe)
+        universe = universe[shift:] + universe[:shift]
+
     logger.info(
         "📡 Fetching data from Yahoo Finance for %s tickers (chunk=%s, retries=%s)",
-        len(STOCK_UNIVERSE),
+        len(universe),
         YAHOO_CHUNK_SIZE,
         YAHOO_MAX_RETRIES,
     )
 
-    tickers = [meta[1] for meta in STOCK_UNIVERSE]
+    tickers = [meta[1] for meta in universe]
     loop = asyncio.get_event_loop()
 
     history_by_ticker: dict[str, pd.DataFrame] = {}
@@ -494,7 +499,7 @@ async def fetch_all_stocks(min_valid: int | None = None) -> list[dict]:
     stocks: list[dict] = []
     failed = 0
 
-    for name, ticker_sym, country, sector, index, currency, isin in STOCK_UNIVERSE:
+    for name, ticker_sym, country, sector, index, currency, isin in universe:
         try:
             df = history_by_ticker.get(ticker_sym)
             if df is None:

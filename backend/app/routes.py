@@ -14,7 +14,9 @@ from app.schemas import (
 )
 from app.screener import screen_stocks, get_filter_options, get_stock_by_ticker, get_stock_by_id
 from app.ai_analysis import generate_ai_analysis
+from app.fundamentals_refresh import enrich_fundamentals
 from app.seed import refresh_stocks_from_yahoo
+from app.pipeline_refresh import run_multi_pass_refresh
 from sqlalchemy import select, func
 import math
 
@@ -50,9 +52,15 @@ async def screen(req: ScreenRequest, db: AsyncSession = Depends(get_db)):
 async def screen_quick(
     search: str = Query(None, description="Text search"),
     country: str = Query(None),
+    region: str = Query(None),
     sector: str = Query(None),
     market_index: str = Query(None),
     ai_signal: str = Query(None),
+    market_cap_bucket: str = Query(None),
+    above_mm50: bool = Query(None),
+    above_mm200: bool = Query(None),
+    near_52w_high: bool = Query(None),
+    near_52w_low: bool = Query(None),
     sort_by: str = Query("market_cap"),
     sort_dir: str = Query("desc"),
     page: int = Query(1, ge=1),
@@ -67,9 +75,15 @@ async def screen_quick(
     req = ScreenRequest(
         search=search,
         country=country,
+        region=region,
         sector=sector,
         market_index=market_index,
         ai_signal=ai_signal,
+        market_cap_bucket=market_cap_bucket,
+        above_mm50=above_mm50,
+        above_mm200=above_mm200,
+        near_52w_high=near_52w_high,
+        near_52w_low=near_52w_low,
         sort_by=sort_by,
         sort_dir=SortDir(sort_dir),
         page=page,
@@ -269,6 +283,45 @@ async def get_presets():
                     "sort_dir": "desc",
                 },
             },
+            {
+                "id": "breakout_trend",
+                "name": "Breakout Tendance",
+                "description": "Au-dessus MM50/MM200 et proche des plus hauts annuels",
+                "icon": "⚡",
+                "filters": {
+                    "above_mm50": True,
+                    "above_mm200": True,
+                    "near_52w_high": True,
+                    "sort_by": "change_3m",
+                    "sort_dir": "desc",
+                },
+            },
+            {
+                "id": "pullback_quality",
+                "name": "Pullback Qualité",
+                "description": "Titres de qualité en repli mais toujours structurellement haussiers",
+                "icon": "🧲",
+                "filters": {
+                    "above_mm200": True,
+                    "change_1m": {"max": -3.0},
+                    "roe": {"min": 12.0},
+                    "sort_by": "change_1m",
+                    "sort_dir": "asc",
+                },
+            },
+            {
+                "id": "mega_caps_momentum",
+                "name": "Mega Caps Momentum",
+                "description": "Grandes capitalisations avec momentum 3-6 mois",
+                "icon": "🏦",
+                "filters": {
+                    "market_cap_bucket": "mega",
+                    "change_3m": {"min": 5.0},
+                    "change_6m": {"min": 10.0},
+                    "sort_by": "change_6m",
+                    "sort_dir": "desc",
+                },
+            },
         ]
     }
 
@@ -395,3 +448,85 @@ async def refresh_yahoo_data(
         wipe_if_false_stats=wipe_if_false_stats,
     )
     return result
+
+
+@router.post("/admin/pipeline/run")
+async def run_pipeline(
+    min_required: int = Query(20, ge=1, le=500),
+    fetch_min_valid: int | None = Query(None, ge=1, le=500),
+    region: str = Query("world"),
+    include_alpaca_fallback: bool = Query(True),
+    provider_retries: int = Query(3, ge=1, le=10),
+    provider_retry_delay_seconds: float = Query(2.0, ge=0.0, le=60.0),
+    enable_technical_fallback: bool = Query(True),
+    db: AsyncSession = Depends(get_db),
+):
+    """Run the multi-pass, multi-source refresh pipeline with local enrichment."""
+    return await run_multi_pass_refresh(
+        db=db,
+        min_required=min_required,
+        fetch_min_valid=fetch_min_valid,
+        region=region,
+        include_alpaca_fallback=include_alpaca_fallback,
+        provider_retries=provider_retries,
+        provider_retry_delay_seconds=provider_retry_delay_seconds,
+        enable_technical_fallback=enable_technical_fallback,
+    )
+
+
+@router.post("/admin/fundamentals/enrich")
+async def run_fundamentals_enrichment(
+    limit: int = Query(120, ge=1, le=500),
+    only_missing: bool = Query(True),
+    aggressive: bool = Query(False),
+    db: AsyncSession = Depends(get_db),
+):
+    """Run dedicated fundamentals enrichment pass for missing valuation fields."""
+    return await enrich_fundamentals(
+        db=db,
+        limit=limit,
+        only_missing=only_missing,
+        aggressive=aggressive,
+    )
+
+
+@router.get("/admin/pipeline/profiles")
+async def pipeline_profiles():
+    """Recommended profiles for Airflow scheduling and trigger configuration."""
+    return {
+        "profiles": {
+            "intraday": {
+                "description": "Regular gentle refresh throughout the day",
+                "min_required": 8,
+                "fetch_min_valid": 24,
+                "region": "world",
+                "include_alpaca_fallback": True,
+                "provider_retries": 2,
+                "provider_retry_delay_seconds": 2.0,
+                "enable_technical_fallback": True,
+                "schedule_cron": "*/30 6-22 * * 1-5",
+            },
+            "nightly": {
+                "description": "Full multi-source daily refresh",
+                "min_required": 20,
+                "fetch_min_valid": 50,
+                "region": "world",
+                "include_alpaca_fallback": True,
+                "provider_retries": 4,
+                "provider_retry_delay_seconds": 3.0,
+                "enable_technical_fallback": True,
+                "schedule_cron": "15 2 * * 1-5",
+            },
+            "europe_open": {
+                "description": "Pre-open European watchlist prep",
+                "min_required": 12,
+                "fetch_min_valid": 20,
+                "region": "europe",
+                "include_alpaca_fallback": False,
+                "provider_retries": 3,
+                "provider_retry_delay_seconds": 2.0,
+                "enable_technical_fallback": True,
+                "schedule_cron": "0 7 * * 1-5",
+            },
+        }
+    }

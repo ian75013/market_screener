@@ -12,7 +12,7 @@ logger = logging.getLogger(__name__)
 
 # Create async engine with connection pooling
 engine = create_async_engine(
-    settings.database_url,
+    settings.database_url_resolved,
     echo=False,
     pool_size=20,
     max_overflow=10,

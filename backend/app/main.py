@@ -2,6 +2,7 @@
 Market Screener — FastAPI Application
 Stock screening API with AI analysis. Zone Bourse augmenté par IA.
 """
+import asyncio
 import logging
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, HTTPException
@@ -10,8 +11,10 @@ from sqlalchemy import select, func
 
 from app.config import settings
 from app.database import init_db, close_db, AsyncSessionLocal
+from app.fundamentals_refresh import enrich_fundamentals
 from app.models import Stock
-from app.seed import refresh_stocks_from_yahoo
+from app.pipeline_refresh import run_multi_pass_refresh
+from app.seed import generate_identity_only_stocks
 from app.routes import router
 
 # Configure logging
@@ -31,37 +34,149 @@ async def lifespan(app: FastAPI):
     """
     # Startup
     logger.info("🚀 Starting Market Screener API...")
+    app.state.startup_topup_task = None
+    app.state.fundamentals_task = None
     try:
         await init_db()
         logger.info("✅ Database initialized")
         
-        # Always prioritize real open market data from Yahoo Finance.
+        # Multi-source refresh with local metric enrichment.
         async with AsyncSessionLocal() as session:
-            refresh_result = await refresh_stocks_from_yahoo(
-                session,
-                min_required=20,
-                wipe_if_false_stats=True,
+            refresh_result = await run_multi_pass_refresh(
+                db=session,
+                min_required=settings.startup_min_required,
+                fetch_min_valid=settings.startup_fetch_min_valid,
+                region="world",
+                include_alpaca_fallback=settings.startup_include_alpaca_fallback,
+                provider_retries=settings.startup_provider_retries,
+                provider_retry_delay_seconds=settings.startup_provider_retry_delay_seconds,
+                enable_technical_fallback=settings.startup_enable_technical_fallback,
             )
 
             count = (await session.execute(select(func.count(Stock.id)))).scalar() or 0
             if refresh_result["updated"]:
                 logger.info(
-                    "📡 Yahoo refresh applied: %s valid stocks (fetched=%s)",
+                    "📡 Multi-pass refresh applied: %s valid stocks (source=%s, fetched=%s)",
                     refresh_result["valid"],
+                    refresh_result.get("source"),
                     refresh_result["fetched"],
                 )
             else:
                 logger.warning(
-                    "⚠️ Yahoo refresh not applied: %s (valid=%s, fetched=%s)",
+                    "⚠️ Multi-pass refresh not applied: %s (valid=%s, fetched=%s)",
                     refresh_result.get("reason"),
                     refresh_result.get("valid"),
                     refresh_result.get("fetched"),
                 )
 
             if count == 0:
-                raise RuntimeError("No valid market data available after Yahoo refresh")
+                logger.warning(
+                    "⚠️ No valid market data at startup, loading identity-only stock universe"
+                )
+                session.add_all(generate_identity_only_stocks())
+                await session.commit()
+                count = (await session.execute(select(func.count(Stock.id)))).scalar() or 0
 
             logger.info("📊 Database now contains %s stocks", count)
+
+        async def _startup_topup() -> None:
+            """Background top-up passes to recover more rows after API is ready."""
+            for round_idx in range(1, settings.startup_topup_rounds + 1):
+                await asyncio.sleep(settings.startup_topup_interval_seconds)
+                try:
+                    async with AsyncSessionLocal() as bg_session:
+                        refresh_result = await run_multi_pass_refresh(
+                            db=bg_session,
+                            min_required=settings.startup_min_required,
+                            fetch_min_valid=settings.startup_fetch_min_valid,
+                            region="world",
+                            include_alpaca_fallback=settings.startup_include_alpaca_fallback,
+                            provider_retries=settings.startup_provider_retries,
+                            provider_retry_delay_seconds=settings.startup_provider_retry_delay_seconds,
+                            enable_technical_fallback=settings.startup_enable_technical_fallback,
+                        )
+                        bg_count = (await bg_session.execute(select(func.count(Stock.id)))).scalar() or 0
+                        logger.info(
+                            "🔁 Startup top-up pass %s/%s: updated=%s fetched=%s valid=%s total=%s",
+                            round_idx,
+                            settings.startup_topup_rounds,
+                            refresh_result.get("updated"),
+                            refresh_result.get("fetched"),
+                            refresh_result.get("valid"),
+                            bg_count,
+                        )
+                        if bg_count >= settings.startup_fetch_min_valid:
+                            logger.info("✅ Top-up reached target (%s rows)", bg_count)
+                            break
+                except Exception as exc:
+                    logger.warning("⚠️ Startup top-up pass %s failed: %s", round_idx, exc)
+
+        if count < settings.startup_fetch_min_valid and settings.startup_topup_rounds > 0:
+            logger.info(
+                "⏳ Scheduling background top-up (%s passes every %.1fs, target=%s)",
+                settings.startup_topup_rounds,
+                settings.startup_topup_interval_seconds,
+                settings.startup_fetch_min_valid,
+            )
+            app.state.startup_topup_task = asyncio.create_task(_startup_topup())
+
+        async def _fundamentals_daemon() -> None:
+            """Aggressive early enrichment, then lighter recurring passes."""
+            if settings.fundamentals_bootstrap_initial_delay_seconds > 0:
+                await asyncio.sleep(settings.fundamentals_bootstrap_initial_delay_seconds)
+
+            # Bootstrap phase: aggressive rounds shortly after startup.
+            for round_idx in range(1, settings.fundamentals_bootstrap_rounds + 1):
+                if round_idx > 1:
+                    await asyncio.sleep(settings.fundamentals_bootstrap_interval_seconds)
+                try:
+                    async with AsyncSessionLocal() as f_session:
+                        result = await enrich_fundamentals(
+                            db=f_session,
+                            limit=settings.fundamentals_round_limit,
+                            only_missing=settings.fundamentals_only_missing,
+                            aggressive=True,
+                        )
+                        logger.info(
+                            "📘 Fundamentals bootstrap %s/%s: enriched=%s fields=%s checked=%s",
+                            round_idx,
+                            settings.fundamentals_bootstrap_rounds,
+                            result.get("enriched"),
+                            result.get("fields_written"),
+                            result.get("checked"),
+                        )
+                except Exception as exc:
+                    logger.warning("⚠️ Fundamentals bootstrap %s failed: %s", round_idx, exc)
+
+            # Maintenance phase: lighter recurring passes.
+            while True:
+                await asyncio.sleep(settings.fundamentals_maintenance_interval_seconds)
+                try:
+                    async with AsyncSessionLocal() as f_session:
+                        result = await enrich_fundamentals(
+                            db=f_session,
+                            limit=settings.fundamentals_round_limit,
+                            only_missing=settings.fundamentals_only_missing,
+                            aggressive=False,
+                        )
+                        logger.info(
+                            "📘 Fundamentals maintenance: enriched=%s fields=%s checked=%s",
+                            result.get("enriched"),
+                            result.get("fields_written"),
+                            result.get("checked"),
+                        )
+                except Exception as exc:
+                    logger.warning("⚠️ Fundamentals maintenance pass failed: %s", exc)
+
+        if settings.fundamentals_enabled:
+            logger.info(
+                "📘 Scheduling fundamentals daemon (delay=%.1fs, bootstrap=%s every %.1fs, maintenance every %.1fs)",
+                settings.fundamentals_bootstrap_initial_delay_seconds,
+                settings.fundamentals_bootstrap_rounds,
+                settings.fundamentals_bootstrap_interval_seconds,
+                settings.fundamentals_maintenance_interval_seconds,
+            )
+            app.state.fundamentals_task = asyncio.create_task(_fundamentals_daemon())
     except Exception as e:
         logger.error(f"❌ Startup failed: {e}")
         raise
@@ -72,6 +187,12 @@ async def lifespan(app: FastAPI):
     # Shutdown
     logger.info("🛑 Shutting down...")
     try:
+        startup_task = getattr(app.state, "startup_topup_task", None)
+        if startup_task and not startup_task.done():
+            startup_task.cancel()
+        fundamentals_task = getattr(app.state, "fundamentals_task", None)
+        if fundamentals_task and not fundamentals_task.done():
+            fundamentals_task.cancel()
         await close_db()
         logger.info("✅ Gracefully shut down")
     except Exception as e:

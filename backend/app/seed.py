@@ -247,6 +247,36 @@ def generate_stocks() -> list[Stock]:
     return stocks
 
 
+def generate_identity_only_stocks() -> list[Stock]:
+    """
+    Generate stocks with identity fields only.
+
+    Numeric metrics are intentionally left as NULL when possible, and price is
+    set to 0.0 as a placeholder because the column is non-nullable.
+    """
+    stocks: list[Stock] = []
+    for name, ticker, country, sector, idx, currency, isin in RAW_STOCKS:
+        stocks.append(
+            Stock(
+                name=name,
+                ticker=ticker,
+                country=country,
+                sector=sector,
+                market_index=idx,
+                currency=currency,
+                isin=isin,
+                price=0.0,
+                change_1d=None,
+                change_1w=None,
+                change_1m=None,
+                change_ytd=None,
+                market_cap=None,
+                dividend_yield=None,
+            )
+        )
+    return stocks
+
+
 def _is_false_stat_payload(payload: dict) -> bool:
     """Detect clearly invalid market stats coming from an upstream source."""
     price = payload.get("price")

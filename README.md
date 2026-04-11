@@ -2,12 +2,16 @@
 
 AI-powered stock screening API with PostgreSQL backend and React frontend. Screener AI augmented.
 
+Comprehensive project reference (architecture, deployment, operations, and latest changes): [PROJECT_DOCUMENTATION.md](PROJECT_DOCUMENTATION.md)
+
 ## Features
 
 - **Dynamic Stock Screening**: Filter stocks by fundamental, technical, and AI-based criteria
+- **TradingView-style Filters**: Region, cap bucket, 52w distance, above/below moving averages
 - **PostgreSQL Database**: Reliable, scalable relational database with connection pooling
 - **FastAPI Backend**: Modern, fast Python API framework with automatic Swagger documentation
 - **React Frontend**: Interactive user interface with real-time updates
+- **Airflow Scheduling**: Intraday and nightly DAGs for timed multi-pass refresh
 - **Docker Compose**: Complete containerized stack for easy local development and deployment
 - **Health Checks**: Built-in service health monitoring and graceful shutdown
 - **Async Database Operations**: Non-blocking I/O with connection pooling and recycling
@@ -40,6 +44,7 @@ This will automatically:
 - Pull PostgreSQL 16 Alpine image
 - Build the backend FastAPI service
 - Build the frontend React service with multi-stage build
+- Start Airflow (init + scheduler + webserver)
 - Create and initialize the database
 - Seed initial stock data
 - Perform health checks on all services
@@ -52,6 +57,38 @@ Once all services report as "healthy" (check with `docker compose ps`):
 - **API Documentation**: http://localhost:8000/docs
 - **API Health Check**: http://localhost:8000/health
 - **PostgreSQL**: localhost:5432 (for database tools)
+- **Airflow UI**: http://localhost:8088 (`admin` / `admin`)
+
+### Airflow On VPN
+
+Airflow can be restricted to a VPN address instead of being exposed on all interfaces.
+
+Set these variables in [.env](.env):
+
+```bash
+AIRFLOW_BIND_HOST=127.0.0.1
+AIRFLOW_PORT=8088
+```
+
+If you use a VPN such as Tailscale or WireGuard, replace `127.0.0.1` with the VPN IP of the host, for example:
+
+```bash
+AIRFLOW_BIND_HOST=100.x.y.z
+AIRFLOW_PORT=8088
+```
+
+Then restart Airflow:
+
+```bash
+docker compose up -d airflow-webserver airflow-scheduler
+```
+
+With this setup, Airflow listens only on the VPN IP and is not exposed on the public interface.
+
+Local test recommendation:
+
+- Keep `AIRFLOW_BIND_HOST=127.0.0.1` for local development.
+- Use the OVH deployment env file (`deploy/scripts/env.ovh`) for VPS production, where `AIRFLOW_BIND_HOST` is your VPN IP (for example OpenVPN `10.8.0.1`).
 
 ## Configuration
 
@@ -68,16 +105,52 @@ POSTGRES_HOST=postgres
 POSTGRES_PORT=5432
 
 # Backend
-DATABASE_URL=postgresql+asyncpg://screener_user:screener_password_dev@postgres:5432/market_screener
+# Optional override. Leave empty to auto-build from POSTGRES_* values.
+DATABASE_URL=
 PYTHONUNBUFFERED=1
 ENVIRONMENT=development
 ALPACA_API_KEY=
 ALPACA_SECRET_KEY=
 ALPACA_DATA_BASE_URL=https://data.alpaca.markets
+STARTUP_MIN_REQUIRED=8
+STARTUP_FETCH_MIN_VALID=40
+STARTUP_PROVIDER_RETRIES=2
+STARTUP_PROVIDER_RETRY_DELAY_SECONDS=3.0
+STARTUP_INCLUDE_ALPACA_FALLBACK=true
+STARTUP_ENABLE_TECHNICAL_FALLBACK=true
+FUNDAMENTALS_ENABLED=true
+FUNDAMENTALS_BOOTSTRAP_ROUNDS=8
+FUNDAMENTALS_BOOTSTRAP_INITIAL_DELAY_SECONDS=300
+FUNDAMENTALS_BOOTSTRAP_INTERVAL_SECONDS=120
+FUNDAMENTALS_MAINTENANCE_INTERVAL_SECONDS=1800
+FUNDAMENTALS_ROUND_LIMIT=120
+FUNDAMENTALS_ONLY_MISSING=true
 
 # Frontend
 VITE_API_URL=http://localhost:8000/api/v1
+
+# Airflow
+AIRFLOW_UID=50000
+AIRFLOW_BIND_HOST=127.0.0.1
+AIRFLOW_PORT=8088
+AIRFLOW_ADMIN_USERNAME=admin
+AIRFLOW_ADMIN_PASSWORD=change-me-local
+AIRFLOW_ADMIN_FIRSTNAME=Market
+AIRFLOW_ADMIN_LASTNAME=Screener
+AIRFLOW_ADMIN_EMAIL=admin@local.dev
 ```
+
+Startup multi-pass behavior:
+
+- `STARTUP_MIN_REQUIRED`: minimum valid rows required to accept provider update
+- `STARTUP_FETCH_MIN_VALID`: target rows to collect during startup fetch passes
+- `STARTUP_PROVIDER_RETRIES`: number of startup passes
+- `STARTUP_PROVIDER_RETRY_DELAY_SECONDS`: pause between passes
+
+Dedicated fundamentals enrichment behavior:
+
+- Aggressive bootstrap rounds after startup, then lighter recurring passes every 30 minutes.
+- Manual trigger endpoint: `POST /api/v1/admin/fundamentals/enrich`
 
 ### Production Deployment
 
@@ -103,6 +176,12 @@ cors_origins = [
 3. Enable HTTPS with reverse proxy (Nginx, Caddy)
 4. Use secrets management for passwords
 5. Consider adding authentication (JWT, OAuth)
+
+Production stack file for OVH: use [deploy/docker-compose.ovh.yml](deploy/docker-compose.ovh.yml) with the base compose file.
+
+For the OVH VPS deployment workflow and scripts, including Apache + Certbot autoconfig and minimal rollback, see [scripts/DEPLOYMENT_GUIDE.md](scripts/DEPLOYMENT_GUIDE.md).
+
+For a complete consolidated technical recap (local + OVH + OpenVPN + Airflow + retries/fallback), see [DEPLOYMENT_OVH_AIRFLOW_PIPELINE.md](DEPLOYMENT_OVH_AIRFLOW_PIPELINE.md).
 
 ## Architecture
 
@@ -179,13 +258,37 @@ GET  /api/v1/presets                  # Get screening presets
 GET  /api/v1/saved-screens            # Get user's saved screens
 POST /api/v1/saved-screens            # Create and save a screen
 POST /api/v1/admin/refresh-yahoo      # Force refresh (Yahoo first, Alpaca fallback if configured)
+POST /api/v1/admin/pipeline/run       # Multi-pass multi-source refresh with local calculations
+GET  /api/v1/admin/pipeline/profiles  # Recommended scheduling profiles for Airflow
 
 ### External Data Providers
 
 - Primary provider: Yahoo Finance (no key required)
 - Fallback provider: Alpaca Data API (optional key-based)
+- Local calculations: technical and derived metrics are computed in backend pipeline passes
 
 If Yahoo is rate-limited and Alpaca credentials are configured, the backend attempts Alpaca fallback automatically.
+
+### Airflow DAG Schedules
+
+- `market_screener_intraday_pipeline` cron: `10 * * * 1-5`
+- `market_screener_nightly_pipeline` cron: `15 2 * * 1-5`
+
+Both DAGs call the backend pipeline endpoint and run post-refresh quality checks.
+
+Pipeline resilience:
+
+- Provider fetch is retried automatically (`provider_retries`, `provider_retry_delay_seconds`).
+- If provider data is incomplete, technical indicators are completed with automatic local fallback calculations (`enable_technical_fallback=true`).
+
+### Advanced Filters (TradingView-like)
+
+- Region: `north_america`, `europe`, `asia_pacific`, `world`
+- Market cap bucket: `micro`, `small`, `mid`, `large`, `mega`
+- Trend booleans: `above_mm50`, `above_mm200`
+- 52-week proximity booleans: `near_52w_high`, `near_52w_low`
+- Distance ranges: `dist_52w_high`, `dist_52w_low`
+- Momentum ranges: `change_3m`, `change_6m`
 ```
 
 ## Development
