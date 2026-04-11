@@ -1,29 +1,29 @@
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: medvision-api
-  namespace: medvision
+  name: market-screener-api
+  namespace: market-screener
 spec:
   replicas: 1
   selector:
     matchLabels:
-      app: medvision-api
+      app: market-screener-api
   template:
     metadata:
       labels:
-        app: medvision-api
+        app: market-screener-api
     spec:
       containers:
         - name: api
-          image: medvision-api:latest
+          image: market-screener-api:latest
           imagePullPolicy: IfNotPresent
           command: ["uvicorn"]
-          args: ["src.api.main:app", "--host", "0.0.0.0", "--port", "8000"]
+          args: ["app.main:app", "--host", "0.0.0.0", "--port", "8000"]
           ports:
             - containerPort: 8000
           envFrom:
             - configMapRef:
-                name: medvision-config
+                name: market-screener-config
           resources:
             requests:
               cpu: "500m"

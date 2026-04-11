@@ -78,7 +78,7 @@ configure_caddy() {
   # Create a temporary installation script
   local tmp_local_script
   tmp_local_script="$(mktemp)"
-  local tmp_remote_script="/tmp/medvision-caddy-install.sh"
+  local tmp_remote_script="/tmp/market-screener-caddy-install.sh"
 
   cat > "$tmp_local_script" <<'SCRIPT_EOF'
 #!/bin/bash
@@ -142,7 +142,7 @@ configure_nginx() {
   local ssh_port="${SSH_PORT:-22}"
   local api_domain="${API_DOMAIN:-}"
   local app_domain="${APP_DOMAIN:-}"
-  local app_dir="${APP_DIR:-/opt/medvision-ai}"
+  local app_dir="${APP_DIR:-/opt/market-screener}"
   local sudo_password="${SUDO_PASSWORD:-}"
   local api_host_port="${API_HOST_PORT:-18000}"
   local streamlit_host_port="${STREAMLIT_HOST_PORT:-18501}"
@@ -178,10 +178,10 @@ configure_nginx() {
   # Expose public Apache vhosts directly to the Docker API and Streamlit services.
   local tmp_local_apache_conf
   tmp_local_apache_conf="$(mktemp)"
-  local tmp_remote_apache_conf="/tmp/medvision-apache-site.conf"
+  local tmp_remote_apache_conf="/tmp/market-screener-apache-site.conf"
   local tmp_local_apache_redirect_conf
   tmp_local_apache_redirect_conf="$(mktemp)"
-  local tmp_remote_apache_redirect_conf="/tmp/medvision-apache-site-redirect.conf"
+  local tmp_remote_apache_redirect_conf="/tmp/market-screener-apache-site-redirect.conf"
   cat > "$tmp_local_apache_conf" <<EOF
 <VirtualHost *:80>
   ServerName ${api_domain}
@@ -220,7 +220,7 @@ EOF
 
   local tmp_local_apache_script
   tmp_local_apache_script="$(mktemp)"
-  local tmp_remote_apache_script="/tmp/medvision-apache-proxy-install.sh"
+  local tmp_remote_apache_script="/tmp/market-screener-apache-proxy-install.sh"
   cat > "$tmp_local_apache_script" <<'SCRIPT_EOF'
 #!/usr/bin/env bash
 set -euo pipefail
@@ -241,10 +241,10 @@ if ! command -v apache2ctl >/dev/null 2>&1; then
   exit 0
 fi
 
-run_sudo install -m 644 "$TMP_REMOTE_APACHE_CONF" /etc/apache2/sites-available/medvision-ai.conf
+run_sudo install -m 644 "$TMP_REMOTE_APACHE_CONF" /etc/apache2/sites-available/market-screener.conf
 run_sudo a2enmod proxy proxy_http proxy_wstunnel headers ssl rewrite >/dev/null
-run_sudo a2disconf medvision-ai-proxy >/dev/null 2>&1 || true
-run_sudo a2ensite medvision-ai >/dev/null
+run_sudo a2disconf market-screener-proxy >/dev/null 2>&1 || true
+run_sudo a2ensite market-screener >/dev/null
 run_sudo apache2ctl configtest
 run_sudo systemctl reload apache2
 
@@ -306,7 +306,7 @@ fi
 
 if [ "$api_cert_ok" != "true" ] || [ "$app_cert_ok" != "true" ]; then
   if [ "${AUTO_CERTBOT_ONCE:-true}" = "true" ]; then
-    marker_file="/etc/letsencrypt/.medvision-certbot-bootstrap.done"
+    marker_file="/etc/letsencrypt/.market-screener-certbot-bootstrap.done"
     if ! run_sudo test -f "$marker_file"; then
       if [ -n "${LETSENCRYPT_EMAIL:-}" ]; then
         run_sudo apt-get update
@@ -332,7 +332,7 @@ else
 fi
 
 if [ "${AUTO_CERTBOT_ONCE:-true}" = "true" ]; then
-  marker_file="/etc/letsencrypt/.medvision-certbot-bootstrap.done"
+  marker_file="/etc/letsencrypt/.market-screener-certbot-bootstrap.done"
   if ! run_sudo test -f "$marker_file"; then
     if [ "$api_cert_ok" = "true" ] && [ "$app_cert_ok" = "true" ]; then
       run_sudo touch "$marker_file"
@@ -341,7 +341,7 @@ if [ "${AUTO_CERTBOT_ONCE:-true}" = "true" ]; then
 fi
 
 if [ "$api_cert_ok" = "true" ] && [ "$app_cert_ok" = "true" ]; then
-  run_sudo install -m 644 "$TMP_REMOTE_APACHE_REDIRECT_CONF" /etc/apache2/sites-available/medvision-ai.conf
+  run_sudo install -m 644 "$TMP_REMOTE_APACHE_REDIRECT_CONF" /etc/apache2/sites-available/market-screener.conf
   api_cert_resolved="${api_pair%%|*}"
   api_key_resolved="${api_pair##*|}"
   app_cert_resolved="${app_pair%%|*}"
@@ -382,15 +382,15 @@ if [ "$api_cert_ok" = "true" ] && [ "$app_cert_ok" = "true" ]; then
 </VirtualHost>
 </IfModule>
 EOF_SSL
-  run_sudo install -m 644 "$ssl_tmp" /etc/apache2/sites-available/medvision-ai-ssl.conf
+  run_sudo install -m 644 "$ssl_tmp" /etc/apache2/sites-available/market-screener-ssl.conf
   rm -f "$ssl_tmp"
-  run_sudo a2ensite medvision-ai-ssl >/dev/null
+  run_sudo a2ensite market-screener-ssl >/dev/null
   run_sudo apache2ctl configtest
   run_sudo systemctl reload apache2
-  echo "[deploy-ovh] Apache SSL site enabled for MedVision domains." >&2
+  echo "[deploy-ovh] Apache SSL site enabled for Market Screener domains." >&2
 else
-  run_sudo install -m 644 "$TMP_REMOTE_APACHE_CONF" /etc/apache2/sites-available/medvision-ai.conf
-  run_sudo a2dissite medvision-ai-ssl >/dev/null 2>&1 || true
+  run_sudo install -m 644 "$TMP_REMOTE_APACHE_CONF" /etc/apache2/sites-available/market-screener.conf
+  run_sudo a2dissite market-screener-ssl >/dev/null 2>&1 || true
   run_sudo apache2ctl configtest
   run_sudo systemctl reload apache2
   echo "[deploy-ovh] Apache SSL site skipped: certificates are not available yet." >&2

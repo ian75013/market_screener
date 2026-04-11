@@ -1,30 +1,20 @@
 apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
-  name: medvision-ingress
-  namespace: medvision
+  name: market-screener-ingress
+  namespace: market-screener
   annotations:
     nginx.ingress.kubernetes.io/proxy-body-size: "32m"
 spec:
   ingressClassName: nginx
   rules:
-    - host: api.medvision.local
+    - host: api.market-screener.local
       http:
         paths:
           - path: /
             pathType: Prefix
             backend:
               service:
-                name: medvision-api
+                name: market-screener-api
                 port:
                   number: 8000
-    - host: app.medvision.local
-      http:
-        paths:
-          - path: /
-            pathType: Prefix
-            backend:
-              service:
-                name: medvision-streamlit
-                port:
-                  number: 8501

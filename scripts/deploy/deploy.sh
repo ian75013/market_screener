@@ -2,7 +2,7 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-APP_NAME="${APP_NAME:-medvision-ai}"
+APP_NAME="${APP_NAME:-market-screener}"
 IMAGE_TAG="${IMAGE_TAG:-latest}"
 
 if [ -n "${SUDO_PASSWORD:-}" ] && [ "${ALLOW_PLAINTEXT_SUDO_PASSWORD:-false}" != "true" ]; then
@@ -86,19 +86,19 @@ Targets:
 Important env vars by target:
 
 vps-manual / vps-docker:
-  SSH_USER, SSH_HOST, SSH_PORT=22, APP_DIR=/opt/medvision-ai
-  GIT_REPO (ex: git@github.com:org/medvision-ai.git), GIT_BRANCH=main
+  SSH_USER, SSH_HOST, SSH_PORT=22, APP_DIR=/opt/market-screener
+  GIT_REPO (ex: git@github.com:org/market-screener.git), GIT_BRANCH=main
 
 aws-apprunner:
   AWS_REGION, AWS_ACCOUNT_ID
-  ECR_REPO_API=medvision-api, ECR_REPO_STREAMLIT=medvision-streamlit
+  ECR_REPO_API=market-screener-api, ECR_REPO_STREAMLIT=market-screener-frontend
 
 azure-containerapps:
   AZ_SUBSCRIPTION_ID, AZ_RESOURCE_GROUP, AZ_LOCATION
   AZ_ACR_NAME, AZ_CONTAINERAPPS_ENV
 
 gcp-cloudrun:
-  GCP_PROJECT_ID, GCP_REGION, GCP_ARTIFACT_REPO=medvision
+  GCP_PROJECT_ID, GCP_REGION, GCP_ARTIFACT_REPO=market-screener
 
 k8s / k3s:
   KUBE_CONTEXT (optional)
@@ -165,7 +165,7 @@ deploy_vps_manual() {
   local ssh_user="${SSH_USER:-}"
   local ssh_host="${SSH_HOST:-}"
   local ssh_port="${SSH_PORT:-22}"
-  local app_dir="${APP_DIR:-/opt/medvision-ai}"
+  local app_dir="${APP_DIR:-/opt/market-screener}"
   local git_repo="${GIT_REPO:-}"
   local git_branch="${GIT_BRANCH:-main}"
   local sudo_password="${SUDO_PASSWORD:-}"
@@ -277,7 +277,7 @@ deploy_vps_docker() {
   local ssh_user="${SSH_USER:-}"
   local ssh_host="${SSH_HOST:-}"
   local ssh_port="${SSH_PORT:-22}"
-  local app_dir="${APP_DIR:-/opt/medvision-ai}"
+  local app_dir="${APP_DIR:-/opt/market-screener}"
   local git_repo="${GIT_REPO:-}"
   local git_branch="${GIT_BRANCH:-main}"
   local sudo_password="${SUDO_PASSWORD:-}"
@@ -441,8 +441,8 @@ deploy_aws_apprunner() {
 
   local region="${AWS_REGION:-}"
   local account_id="${AWS_ACCOUNT_ID:-}"
-  local repo_api="${ECR_REPO_API:-medvision-api}"
-  local repo_streamlit="${ECR_REPO_STREAMLIT:-medvision-streamlit}"
+  local repo_api="${ECR_REPO_API:-market-screener-api}"
+  local repo_streamlit="${ECR_REPO_STREAMLIT:-market-screener-frontend}"
 
   [ -n "$region" ] || die "AWS_REGION is required"
   [ -n "$account_id" ] || die "AWS_ACCOUNT_ID is required"
@@ -558,7 +558,7 @@ deploy_gcp_cloudrun() {
 
   local project_id="${GCP_PROJECT_ID:-}"
   local region="${GCP_REGION:-europe-west1}"
-  local ar_repo="${GCP_ARTIFACT_REPO:-medvision}"
+  local ar_repo="${GCP_ARTIFACT_REPO:-market-screener}"
 
   [ -n "$project_id" ] || die "GCP_PROJECT_ID is required"
 
@@ -604,7 +604,7 @@ deploy_gcp_cloudrun() {
 
 deploy_k8s_core() {
   require_cmd kubectl
-  local namespace="medvision"
+  local namespace="market-screener"
 
   local api_image="${K8S_API_IMAGE:-}"
   local streamlit_image="${K8S_STREAMLIT_IMAGE:-}"
@@ -623,11 +623,11 @@ deploy_k8s_core() {
   kubectl apply -f "$ROOT_DIR/deploy/k8s/base/streamlit-deployment.yaml"
   kubectl apply -f "$ROOT_DIR/deploy/k8s/base/streamlit-service.yaml"
 
-  kubectl -n "$namespace" set image deployment/medvision-api api="$api_image"
-  kubectl -n "$namespace" set image deployment/medvision-streamlit streamlit="$streamlit_image"
+  kubectl -n "$namespace" set image deployment/market-screener-api api="$api_image"
+  kubectl -n "$namespace" set image deployment/market-screener-frontend streamlit="$streamlit_image"
 
-  kubectl -n "$namespace" rollout status deployment/medvision-api --timeout=300s
-  kubectl -n "$namespace" rollout status deployment/medvision-streamlit --timeout=300s
+  kubectl -n "$namespace" rollout status deployment/market-screener-api --timeout=300s
+  kubectl -n "$namespace" rollout status deployment/market-screener-frontend --timeout=300s
   kubectl -n "$namespace" get svc,pods
 
   log "Kubernetes deployment completed"
