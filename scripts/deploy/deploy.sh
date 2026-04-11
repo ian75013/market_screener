@@ -172,7 +172,7 @@ deploy_vps_docker() {
   local app_dir="${APP_DIR:-/opt/market-screener}"
   local git_repo="${GIT_REPO:-}"
   local git_branch="${GIT_BRANCH:-main}"
-  local auto_port_remap="${AUTO_PORT_REMAP:-true}"
+  local auto_port_remap="${AUTO_PORT_REMAP:-false}"
   local sudo_password="${SUDO_PASSWORD:-}"
   local postgres_bind_host="${POSTGRES_BIND_HOST:-127.0.0.1}"
   local postgres_host_port="${POSTGRES_HOST_PORT:-5432}"
@@ -303,7 +303,7 @@ resolve_port() {
   fi
 
   echo "[deploy][error] Host port ${wanted} is already in use on VPS (${name})." >&2
-  echo "[deploy][error] Set ${name} in your OVH env file, or set AUTO_PORT_REMAP=true." >&2
+  echo "[deploy][error] Set ${name} in your OVH env file to a free host port, or set AUTO_PORT_REMAP=true intentionally." >&2
   ss -ltnp "sport = :${wanted}" || true
   exit 1
 }

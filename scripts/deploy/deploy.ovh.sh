@@ -21,6 +21,23 @@ set +a
 
 PROXY_PROVIDER="${PROXY_PROVIDER:-nginx}"
 
+# Backward compatibility with legacy OVH env flags.
+if [ "${APACHE_AUTOCONFIG:-false}" = "true" ]; then
+  PROXY_PROVIDER="apache"
+fi
+
+if [ -z "${PROVISION_CADDY+x}" ]; then
+  if [ "${APACHE_AUTOCONFIG:-false}" = "true" ] || [ "${CADDY_AUTOCONFIG:-false}" = "true" ]; then
+    PROVISION_CADDY=true
+  else
+    PROVISION_CADDY=false
+  fi
+fi
+
+if [ -z "${AUTO_CERTBOT_ONCE+x}" ] && [ -n "${CERTBOT_AUTOCONFIG:-}" ]; then
+  AUTO_CERTBOT_ONCE="${CERTBOT_AUTOCONFIG}"
+fi
+
 if [ -n "${SUDO_PASSWORD:-}" ] && [ "${ALLOW_PLAINTEXT_SUDO_PASSWORD:-false}" != "true" ]; then
   echo "[deploy-ovh][error] Refusing plaintext SUDO_PASSWORD from env file." >&2
   echo "[deploy-ovh][error] Use ASK_SUDO_PASSWORD=true (recommended), or set ALLOW_PLAINTEXT_SUDO_PASSWORD=true explicitly." >&2
@@ -242,10 +259,34 @@ if ! command -v apache2ctl >/dev/null 2>&1; then
   exit 0
 fi
 
-run_sudo install -m 644 "$TMP_REMOTE_APACHE_CONF" /etc/apache2/sites-available/market-screener.conf
+SITE_HTTP="/etc/apache2/sites-available/000-market-screener.conf"
+SITE_SSL="/etc/apache2/sites-available/000-market-screener-ssl.conf"
+
+disable_conflicting_sites() {
+  local domain="$1"
+  local site
+  for site in /etc/apache2/sites-enabled/*.conf; do
+    [ -e "$site" ] || continue
+    case "$(basename "$site")" in
+      000-market-screener.conf|000-market-screener-ssl.conf|market-screener.conf|market-screener-ssl.conf)
+        continue
+        ;;
+    esac
+    if run_sudo grep -Eq "^[[:space:]]*Server(Name|Alias)[[:space:]]+${domain}([[:space:]]|$)" "$site"; then
+      run_sudo a2dissite "$(basename "$site")" >/dev/null 2>&1 || true
+    fi
+  done
+}
+
+disable_conflicting_sites "$API_DOMAIN"
+disable_conflicting_sites "$APP_DOMAIN"
+
+run_sudo install -m 644 "$TMP_REMOTE_APACHE_CONF" "$SITE_HTTP"
 run_sudo a2enmod proxy proxy_http proxy_wstunnel headers ssl rewrite >/dev/null
 run_sudo a2disconf market-screener-proxy >/dev/null 2>&1 || true
-run_sudo a2ensite market-screener >/dev/null
+run_sudo a2dissite market-screener >/dev/null 2>&1 || true
+run_sudo a2dissite market-screener-ssl >/dev/null 2>&1 || true
+run_sudo a2ensite 000-market-screener >/dev/null
 run_sudo apache2ctl configtest
 run_sudo systemctl reload apache2
 
@@ -342,13 +383,15 @@ if [ "${AUTO_CERTBOT_ONCE:-true}" = "true" ]; then
 fi
 
 if [ "${FORCE_HTTP_ONLY:-false}" = "true" ]; then
-  run_sudo install -m 644 "$TMP_REMOTE_APACHE_CONF" /etc/apache2/sites-available/market-screener.conf
+  run_sudo install -m 644 "$TMP_REMOTE_APACHE_CONF" "$SITE_HTTP"
   run_sudo a2dissite market-screener-ssl >/dev/null 2>&1 || true
+  run_sudo a2dissite 000-market-screener-ssl >/dev/null 2>&1 || true
+  run_sudo a2ensite 000-market-screener >/dev/null
   run_sudo apache2ctl configtest
   run_sudo systemctl reload apache2
   echo "[deploy-ovh] HTTPS disabled by FORCE_HTTP_ONLY=true; Apache configured in HTTP mode." >&2
 elif [ "$api_cert_ok" = "true" ] && [ "$app_cert_ok" = "true" ]; then
-  run_sudo install -m 644 "$TMP_REMOTE_APACHE_REDIRECT_CONF" /etc/apache2/sites-available/market-screener.conf
+  run_sudo install -m 644 "$TMP_REMOTE_APACHE_REDIRECT_CONF" "$SITE_HTTP"
   api_cert_resolved="${api_pair%%|*}"
   api_key_resolved="${api_pair##*|}"
   app_cert_resolved="${app_pair%%|*}"
@@ -389,15 +432,18 @@ elif [ "$api_cert_ok" = "true" ] && [ "$app_cert_ok" = "true" ]; then
 </VirtualHost>
 </IfModule>
 EOF_SSL
-  run_sudo install -m 644 "$ssl_tmp" /etc/apache2/sites-available/market-screener-ssl.conf
+  run_sudo install -m 644 "$ssl_tmp" "$SITE_SSL"
   rm -f "$ssl_tmp"
-  run_sudo a2ensite market-screener-ssl >/dev/null
+  run_sudo a2ensite 000-market-screener >/dev/null
+  run_sudo a2ensite 000-market-screener-ssl >/dev/null
   run_sudo apache2ctl configtest
   run_sudo systemctl reload apache2
   echo "[deploy-ovh] Apache SSL site enabled for Market Screener domains." >&2
 else
-  run_sudo install -m 644 "$TMP_REMOTE_APACHE_CONF" /etc/apache2/sites-available/market-screener.conf
+  run_sudo install -m 644 "$TMP_REMOTE_APACHE_CONF" "$SITE_HTTP"
   run_sudo a2dissite market-screener-ssl >/dev/null 2>&1 || true
+  run_sudo a2dissite 000-market-screener-ssl >/dev/null 2>&1 || true
+  run_sudo a2ensite 000-market-screener >/dev/null
   run_sudo apache2ctl configtest
   run_sudo systemctl reload apache2
   echo "[deploy-ovh] Apache SSL site skipped: certificates are not available yet." >&2
