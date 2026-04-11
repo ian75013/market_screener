@@ -12,12 +12,12 @@ const getApiBase = () => {
   const hostname = window.location.hostname;
   const port = 8000; // Backend port
   
-  // If running on localhost/127.0.0.1, use it. Otherwise try localhost:8000
-  const host = (hostname === "localhost" || hostname === "127.0.0.1") 
-    ? hostname 
-    : "localhost";
-    
-  return `${protocol}//${host}:${port}/api/v1`;
+  // If the app is served through a public domain, prefer same-origin /api.
+  if (hostname !== "localhost" && hostname !== "127.0.0.1") {
+    return `${window.location.origin}/api/v1`;
+  }
+
+  return `${protocol}//${hostname}:${port}/api/v1`;
 };
 
 const API_BASE = getApiBase();
@@ -108,9 +108,10 @@ const IconChevronRight = () => (
 );
 
 // ─── Utilities ──────────────────────────────────────────────────────────────
-const fmt = (v, suffix = "", prefix = "") => v == null ? "—" : `${prefix}${v}${suffix}`;
-const fmtPct = (v) => v == null ? "—" : `${v > 0 ? "+" : ""}${v}%`;
-const fmtCap = (v) => v == null ? "—" : v >= 1000 ? `${(v/1000).toFixed(1)}T $` : `${v.toFixed(1)}Md $`;
+const fmt = (v, suffix = "", prefix = "") => v == null ? "N/A" : `${prefix}${v}${suffix}`;
+const fmtPct = (v) => v == null ? "N/A" : `${v > 0 ? "+" : ""}${v}%`;
+const fmtCap = (v) => v == null ? "N/A" : v >= 1000 ? `${(v/1000).toFixed(1)}T $` : `${v.toFixed(1)}Md $`;
+const fmtPrice = (v) => (v == null || v <= 0 ? "N/A" : v.toFixed(2));
 const colorForValue = (v, inv) => {
   if (v == null) return "var(--ms-text-muted)";
   const p = inv ? v < 0 : v > 0, n = inv ? v > 0 : v < 0;
@@ -179,6 +180,9 @@ const VIEW_PRESETS = [
 // ─── Sub-Components ─────────────────────────────────────────────────────────
 
 function ScoreBar({ value, max = 100, color }) {
+  if (value == null) {
+    return <span style={{ fontSize: 11, color: "var(--ms-text-muted)", fontWeight: 600 }}>N/A</span>;
+  }
   return (
     <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
       <div style={{ width: 48, height: 5, borderRadius: 3, background: "var(--ms-bg-tertiary)", overflow: "hidden" }}>
@@ -436,7 +440,7 @@ export default function MarketScreener() {
   const [search, setSearch] = useState("");
   const [filters, setFilters] = useState({});
   const [filterOptions, setFilterOptions] = useState(null);
-  const [showFilters, setShowFilters] = useState(false);
+  const [showFilters, setShowFilters] = useState(true);
   const [sortKey, setSortKey] = useState("market_cap");
   const [sortDir, setSortDir] = useState("desc");
   const [activeView, setActiveView] = useState("performance");
@@ -652,7 +656,7 @@ export default function MarketScreener() {
                       </div>
                     </div>
                   </td>
-                  <td className="ms-td" style={{ fontWeight: 700, color: "var(--ms-text)" }}>{stock.price?.toFixed(2)}</td>
+                  <td className="ms-td" style={{ fontWeight: 700, color: "var(--ms-text)" }}>{fmtPrice(stock.price)}</td>
                   <td className="ms-td" style={{ color: "var(--ms-text-secondary)", fontSize: 11 }}>{fmtCap(stock.marketCap)}</td>
                   {activeCols.map(col => {
                     const val = getNestedValue(stock, col.key);
