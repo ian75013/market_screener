@@ -172,6 +172,7 @@ deploy_vps_docker() {
   local app_dir="${APP_DIR:-/opt/market-screener}"
   local git_repo="${GIT_REPO:-}"
   local git_branch="${GIT_BRANCH:-main}"
+  local auto_port_remap="${AUTO_PORT_REMAP:-true}"
   local sudo_password="${SUDO_PASSWORD:-}"
   local postgres_bind_host="${POSTGRES_BIND_HOST:-127.0.0.1}"
   local postgres_host_port="${POSTGRES_HOST_PORT:-5432}"
@@ -189,7 +190,11 @@ deploy_vps_docker() {
 
   [ -n "$ssh_user" ] || die "SSH_USER is required"
   [ -n "$ssh_host" ] || die "SSH_HOST is required"
-  [ -n "$git_repo" ] || die "GIT_REPO is required"
+  if [ -z "$git_repo" ] && command -v git >/dev/null 2>&1; then
+    git_repo="$(git -C "$ROOT_DIR" remote get-url origin 2>/dev/null || true)"
+  fi
+
+  [ -n "$git_repo" ] || die "GIT_REPO is required (or set a valid origin remote)"
   [ -n "$postgres_bind_host" ] || die "POSTGRES_BIND_HOST is required"
   [ -n "$postgres_host_port" ] || die "POSTGRES_HOST_PORT is required"
   [ -n "$backend_bind_host" ] || die "BACKEND_BIND_HOST is required"
@@ -234,6 +239,66 @@ if [ ! -f "${local_env_file}" ] && [ -f ".env.example" ]; then
   cp .env.example "${local_env_file}"
 fi
 
+if ! command -v ss >/dev/null 2>&1; then
+  run_sudo apt-get update
+  run_sudo apt-get install -y iproute2
+fi
+
+port_in_use() {
+  local p="$1"
+  ss -ltn "sport = :${p}" | awk 'NR>1 {print}' | grep -q .
+}
+
+pick_free_port() {
+  local p="$1"
+  local limit=$((p + 200))
+  while [ "$p" -le "$limit" ]; do
+    if ! port_in_use "$p"; then
+      printf '%s' "$p"
+      return 0
+    fi
+    p=$((p + 1))
+  done
+  return 1
+}
+
+resolve_port() {
+  local name="$1"
+  local wanted="$2"
+  if ! port_in_use "$wanted"; then
+    printf '%s' "$wanted"
+    return 0
+  fi
+
+  if [ "${auto_port_remap}" = "true" ]; then
+    local remapped
+    remapped="$(pick_free_port $((wanted + 1)))" || {
+      echo "[deploy][error] No free port found near ${wanted} for ${name}" >&2
+      exit 1
+    }
+    echo "[deploy][warn] ${name} ${wanted} is busy, remapped to ${remapped}" >&2
+    printf '%s' "$remapped"
+    return 0
+  fi
+
+  echo "[deploy][error] Host port ${wanted} is already in use on VPS (${name})." >&2
+  echo "[deploy][error] Set ${name} in your OVH env file, or set AUTO_PORT_REMAP=true." >&2
+  ss -ltnp "sport = :${wanted}" || true
+  exit 1
+}
+
+postgres_host_port="$(resolve_port POSTGRES_HOST_PORT "${postgres_host_port}")"
+backend_host_port="$(resolve_port BACKEND_HOST_PORT "${backend_host_port}")"
+frontend_host_port="$(resolve_port FRONTEND_HOST_PORT "${frontend_host_port}")"
+airflow_port="$(resolve_port AIRFLOW_PORT "${airflow_port}")"
+
+if ! ip -o addr show | grep -q " ${airflow_bind_host}/"; then
+  echo "[deploy][warn] AIRFLOW_BIND_HOST=${airflow_bind_host} not found on VPS, fallback to 127.0.0.1" >&2
+  airflow_bind_host="127.0.0.1"
+fi
+
+echo "[deploy] Effective ports: postgres=${postgres_host_port}, backend=${backend_host_port}, frontend=${frontend_host_port}, airflow=${airflow_port}" >&2
+
 run_compose() {
   run_sudo env \
     POSTGRES_BIND_HOST="${postgres_bind_host}" \
@@ -248,33 +313,6 @@ run_compose() {
 }
 
 run_compose down --remove-orphans || true
-
-if command -v ss >/dev/null 2>&1; then
-  if ss -ltn "sport = :${postgres_host_port}" | awk 'NR>1 {print}' | grep -q .; then
-    echo "[deploy][error] Host port ${postgres_host_port} is already in use on VPS." >&2
-    echo "[deploy][error] Set POSTGRES_HOST_PORT in your OVH env file, then redeploy." >&2
-    ss -ltnp "sport = :${postgres_host_port}" || true
-    exit 1
-  fi
-  if ss -ltn "sport = :${backend_host_port}" | awk 'NR>1 {print}' | grep -q .; then
-    echo "[deploy][error] Host port ${backend_host_port} is already in use on VPS." >&2
-    echo "[deploy][error] Set BACKEND_HOST_PORT in your OVH env file, then redeploy." >&2
-    ss -ltnp "sport = :${backend_host_port}" || true
-    exit 1
-  fi
-  if ss -ltn "sport = :${frontend_host_port}" | awk 'NR>1 {print}' | grep -q .; then
-    echo "[deploy][error] Host port ${frontend_host_port} is already in use on VPS." >&2
-    echo "[deploy][error] Set FRONTEND_HOST_PORT in your OVH env file, then redeploy." >&2
-    ss -ltnp "sport = :${frontend_host_port}" || true
-    exit 1
-  fi
-  if ss -ltn "sport = :${airflow_port}" | awk 'NR>1 {print}' | grep -q .; then
-    echo "[deploy][error] Host port ${airflow_port} is already in use on VPS." >&2
-    echo "[deploy][error] Set AIRFLOW_PORT in your OVH env file, then redeploy." >&2
-    ss -ltnp "sport = :${airflow_port}" || true
-    exit 1
-  fi
-fi
 
 run_compose up --build -d --remove-orphans
 run_compose ps
