@@ -268,8 +268,6 @@ if [ ! -f "${LOCAL_ENV_FILE}" ] && [ -f ".env.example" ]; then
   cp .env.example "${LOCAL_ENV_FILE}"
 fi
 
-run_sudo docker compose -f docker-compose.yml -f deploy/docker-compose.ovh.yml --env-file "${LOCAL_ENV_FILE}" down --remove-orphans || true
-
 if ! command -v ss >/dev/null 2>&1; then
   run_sudo apt-get update
   run_sudo apt-get install -y iproute2
