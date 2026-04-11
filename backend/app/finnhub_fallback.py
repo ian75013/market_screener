@@ -54,15 +54,12 @@ def fetch_finnhub_fundamentals(ticker: str) -> dict[str, Optional[float]]:
         if not profile:
             return {}
 
-        # Finnhub also provides financials via /stock/financials-reported
-        # But for free tier, profile has basic metrics
-        
         market_cap_millions = _safe_float(profile.get("marketCapitalization"))
         market_cap_billions = (market_cap_millions / 1000) if market_cap_millions and market_cap_millions > 0 else None
         
         return {
             "market_cap": market_cap_billions,
-            "per": None,  # Finnhub free tier doesn't have PER in profile
+            "per": None,
             "peg": None,
             "pbr": None,
             "ps_ratio": None,
@@ -101,9 +98,6 @@ async def enrich_fundamentals_finnhub(
     """
     Fallback enrichment using Finnhub free tier.
     Less comprehensive than yfinance, but useful as a backup.
-    
-    Note: Finnhub profile2 doesn't have detailed valuation metrics in free tier.
-    This is mainly useful for market cap updates.
     """
     from sqlalchemy import or_, select
     from app.models import Stock
@@ -135,7 +129,6 @@ async def enrich_fundamentals_finnhub(
         if not snap:
             continue
 
-        # Only really useful for market_cap from Finnhub
         if snap.get("market_cap") and snap["market_cap"] > 0:
             if stock.market_cap is None or (stock.market_cap or 0) <= 0:
                 stock.market_cap = round(snap["market_cap"], 4)
@@ -155,9 +148,6 @@ def fetch_finnhub_quote(ticker: str) -> Optional[dict]:
     """
     Fetch current stock quote from Finnhub.
     Returns dict with price and basic data, or None on error.
-    
-    Finnhub /stock/quote endpoint is fast and suitable as fallback when
-    yfinance is rate-limited.
     """
     try:
         resp = requests.get(
@@ -166,46 +156,34 @@ def fetch_finnhub_quote(ticker: str) -> Optional[dict]:
             timeout=5,
         )
         if resp.status_code == 429:
-            logger.debug(f"Finnhub rate-limited for {ticker}")
+            logger.info(f"❌ Finnhub rate-limited for {ticker}")
             return None
         
         if resp.status_code != 200:
-            logger.debug(f"Finnhub quote failed for {ticker}: {resp.status_code}")
+            logger.warning(f"⚠️ Finnhub quote HTTP {resp.status_code} for {ticker}")
             return None
 
         data = resp.json()
-        if not data or "c" not in data:  # 'c' is current/close price
+        if not data or "c" not in data:
+            logger.debug(f"Finnhub no price data for {ticker}")
             return None
 
-        return data  # Keys: c (close), h (high), l (low), o (open), pc (prev close), t (timestamp)
+        return data
     except requests.Timeout:
-        logger.debug(f"Finnhub timeout for {ticker}")
+        logger.warning(f"⚠️ Finnhub timeout for {ticker}")
         return None
     except Exception as e:
-        logger.debug(f"Finnhub quote error for {ticker}: {e}")
+        logger.warning(f"⚠️ Finnhub quote error for {ticker}: {e}")
         return None
 
 
 async def fetch_all_stocks_from_finnhub(min_valid: int | None = None) -> list[dict]:
     """
-    Fetch all stocks from Finnhub as a fallback when Yahoo Finance is rate-limited.
-    Uses current quote endpoint (fast, doesn't require subscription).
-    
-    Limitations:
-    - Only current price (no 1-year history like Yahoo)
-    - Will compute changes from current vs previous close only
-    - Limited technical indicators compared to Yahoo
-    
-    Args:
-        min_valid: Stop after collecting this many valid stocks
-        
-    Returns:
-        List of stock dicts in same format as fetch_all_stocks() from yahoo_finance.py
+    Fetch all stocks from Finnhub as fallback when Yahoo Finance is rate-limited.
+    Uses current quote endpoint (fast, no subscription needed).
     """
     import asyncio
     from concurrent.futures import ThreadPoolExecutor
-    
-    # Use same universe as Yahoo
     from app.yahoo_finance import STOCK_UNIVERSE
     
     logger.info("📡 Fetching data from Finnhub as Yahoo fallback for %s tickers", len(STOCK_UNIVERSE))
@@ -217,24 +195,29 @@ async def fetch_all_stocks_from_finnhub(min_valid: int | None = None) -> list[di
     
     for name, ticker_sym, country, sector, index, currency, isin in STOCK_UNIVERSE:
         try:
-            # Fetch quote in executor to avoid blocking
-            quote = await loop.run_in_executor(executor, fetch_finnhub_quote, ticker_sym)
+            # Clean ticker: remove country suffixes (.PA, .DE, .L, etc.)
+            # Yahoo uses "TTE.PA" but Finnhub wants "TTE"
+            if "." in ticker_sym:
+                clean_ticker = ticker_sym.split(".")[0]
+            else:
+                clean_ticker = ticker_sym
+            
+            quote = await loop.run_in_executor(executor, fetch_finnhub_quote, clean_ticker)
             
             if quote is None or quote.get("c") is None or quote["c"] <= 0:
                 failed += 1
+                logger.debug(f"⚠️ Finnhub no quote for {ticker_sym} (cleaned: {clean_ticker})")
                 continue
             
-            price = float(quote["c"])  # Current/close price
-            prev_close = float(quote.get("pc", price))  # Previous close
+            price = float(quote["c"])
+            prev_close = float(quote.get("pc", price))
             high_today = float(quote.get("h", price))
             low_today = float(quote.get("l", price))
             
-            # Compute 1-day change only (that's all we have)
             change_1d = 0.0
             if prev_close and prev_close > 0:
                 change_1d = round((price - prev_close) / prev_close * 100, 2)
             
-            # Create stock payload matching yahoo_finance format
             stocks.append({
                 "name": name,
                 "ticker": ticker_sym,
@@ -245,15 +228,15 @@ async def fetch_all_stocks_from_finnhub(min_valid: int | None = None) -> list[di
                 "isin": isin,
                 "price": round(price, 4),
                 "change_1d": change_1d,
-                "change_1w": 0.0,  # Not available from Finnhub quote
+                "change_1w": 0.0,
                 "change_1m": 0.0,
                 "change_3m": 0.0,
                 "change_6m": 0.0,
                 "change_ytd": 0.0,
                 "change_1y": 0.0,
-                "high_52w": high_today,  # Use today's high as proxy
-                "low_52w": low_today,    # Use today's low as proxy
-                "market_cap": 0.0,  # Can fetch separately if needed
+                "high_52w": high_today,
+                "low_52w": low_today,
+                "market_cap": 0.0,
                 "enterprise_value": None,
                 "per": None,
                 "peg": None,
@@ -292,8 +275,7 @@ async def fetch_all_stocks_from_finnhub(min_valid: int | None = None) -> list[di
                 "esg_env": None,
                 "esg_social": None,
                 "esg_gov": None,
-                # Technical scores are derived from prices, which we have minimally
-                "ai_score_overall": 50.0,  # Neutral default
+                "ai_score_overall": 50.0,
                 "ai_score_fundamental": 50.0,
                 "ai_score_technical": 50.0,
                 "ai_score_momentum": 50.0,
@@ -309,6 +291,12 @@ async def fetch_all_stocks_from_finnhub(min_valid: int | None = None) -> list[di
             logger.warning(f"⚠️ Failed to fetch {ticker_sym} from Finnhub: {e}")
             failed += 1
             continue
+    
+    if not stocks:
+        logger.warning(
+            "⚠️ Finnhub fallback collected 0 valid stocks (attempted %s, all failed)",
+            len(STOCK_UNIVERSE),
+        )
     
     logger.info(
         "✅ Fetched %s stocks from Finnhub (%s failed, fallback provider)",
