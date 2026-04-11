@@ -44,7 +44,7 @@ sed \
 
 cp "${tmpfile}" "${TARGET_FILE}"
 
-a2enmod proxy proxy_http headers rewrite >/dev/null
+a2enmod proxy proxy_http proxy_wstunnel headers rewrite ssl >/dev/null
 a2dissite 000-default >/dev/null 2>&1 || true
 a2ensite market-screener.conf >/dev/null
 

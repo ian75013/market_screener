@@ -243,7 +243,7 @@ FRONTEND_HOST_PORT="${FRONTEND_HOST_PORT:-13000}"
 AIRFLOW_BIND_HOST="${AIRFLOW_BIND_HOST:-127.0.0.1}"
 AIRFLOW_PORT="${AIRFLOW_PORT:-8088}"
 LOCAL_ENV_FILE="${LOCAL_ENV_FILE:-.env}"
-AUTO_PORT_REMAP="${AUTO_PORT_REMAP:-true}"
+AUTO_PORT_REMAP="${AUTO_PORT_REMAP:-false}"
 SSH_USER_EFFECTIVE="${SSH_USER_EFFECTIVE:-ubuntu}"
 
 if ! command -v docker >/dev/null 2>&1; then
@@ -259,6 +259,8 @@ fi
 if [ ! -f "${LOCAL_ENV_FILE}" ] && [ -f ".env.example" ]; then
   cp .env.example "${LOCAL_ENV_FILE}"
 fi
+
+run_sudo docker compose -f docker-compose.yml -f deploy/docker-compose.ovh.yml --env-file "${LOCAL_ENV_FILE}" down --remove-orphans || true
 
 if ! command -v ss >/dev/null 2>&1; then
   run_sudo apt-get update
