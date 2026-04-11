@@ -75,11 +75,11 @@ Usage:
   scripts/deploy/deploy.sh <target>
 
 Targets:
-  vps-manual           Deploy on OVH/Hetzner VPS with uv + systemd
-  vps-docker           Deploy on OVH/Hetzner VPS with docker compose
-  aws-apprunner        Deploy API + Streamlit to AWS App Runner
-  azure-containerapps  Deploy API + Streamlit to Azure Container Apps
-  gcp-cloudrun         Deploy API + Streamlit to GCP Cloud Run
+  vps-manual           Deprecated (use vps-docker)
+  vps-docker           Deploy Market Screener on OVH/Hetzner VPS with docker compose
+  aws-apprunner        Deploy backend + frontend to AWS App Runner
+  azure-containerapps  Deploy backend + frontend to Azure Container Apps
+  gcp-cloudrun         Deploy backend + frontend to GCP Cloud Run
   k8s                  Deploy on Kubernetes cluster
   k3s                  Deploy on k3s cluster (same manifests)
 
@@ -91,7 +91,7 @@ vps-manual / vps-docker:
 
 aws-apprunner:
   AWS_REGION, AWS_ACCOUNT_ID
-  ECR_REPO_API=market-screener-api, ECR_REPO_STREAMLIT=market-screener-frontend
+  ECR_REPO_API=market-screener-backend, ECR_REPO_FRONTEND=market-screener-frontend
 
 azure-containerapps:
   AZ_SUBSCRIPTION_ID, AZ_RESOURCE_GROUP, AZ_LOCATION
@@ -102,7 +102,7 @@ gcp-cloudrun:
 
 k8s / k3s:
   KUBE_CONTEXT (optional)
-  K8S_API_IMAGE, K8S_STREAMLIT_IMAGE
+  K8S_API_IMAGE
 
 Common:
   IMAGE_TAG=latest
@@ -160,115 +160,7 @@ EOF
 }
 
 deploy_vps_manual() {
-  require_cmd ssh
-
-  local ssh_user="${SSH_USER:-}"
-  local ssh_host="${SSH_HOST:-}"
-  local ssh_port="${SSH_PORT:-22}"
-  local app_dir="${APP_DIR:-/opt/market-screener}"
-  local git_repo="${GIT_REPO:-}"
-  local git_branch="${GIT_BRANCH:-main}"
-  local sudo_password="${SUDO_PASSWORD:-}"
-  local mlflow_bind_ip="${MLFLOW_BIND_IP:-10.8.0.1}"
-  local mlflow_host_port="${MLFLOW_HOST_PORT:-5000}"
-  local api_domain="${API_DOMAIN:-}"
-  local app_domain="${APP_DOMAIN:-}"
-  local api_bind_ip="${API_BIND_IP:-127.0.0.1}"
-  local api_host_port="${API_HOST_PORT:-18000}"
-  local streamlit_bind_ip="${STREAMLIT_BIND_IP:-127.0.0.1}"
-  local streamlit_host_port="${STREAMLIT_HOST_PORT:-18501}"
-  local nginx_http_bind_ip="${NGINX_HTTP_BIND_IP:-127.0.0.1}"
-  local nginx_http_host_port="${NGINX_HTTP_HOST_PORT:-18080}"
-  local nginx_https_bind_ip="${NGINX_HTTPS_BIND_IP:-127.0.0.1}"
-  local nginx_https_host_port="${NGINX_HTTPS_HOST_PORT:-18443}"
-  local sudo_mode
-  local ssh_tty_args=()
-  local tmp_local_script
-  local tmp_remote_script
-
-  [ -n "$ssh_user" ] || die "SSH_USER is required"
-  [ -n "$ssh_host" ] || die "SSH_HOST is required"
-  [ -n "$git_repo" ] || die "GIT_REPO is required"
-
-  sudo_mode="$(remote_sudo_mode)"
-  if [ "$sudo_mode" = "prompt" ]; then
-    ssh_tty_args=(-tt)
-  fi
-
-  local ssh_target="${ssh_user}@${ssh_host}"
-  log "Syncing repository on VPS"
-  remote_bootstrap_repo "$ssh_target" "$ssh_port" "$app_dir" "$git_repo" "$git_branch"
-  log "Syncing local workspace overlay to VPS"
-  remote_sync_workspace_overlay "$ssh_target" "$ssh_port" "$app_dir"
-
-  log "Installing runtime and configuring systemd services"
-  tmp_local_script="$(mktemp)"
-  tmp_remote_script="/tmp/${APP_NAME}-manual-deploy.sh"
-  cat > "$tmp_local_script" <<EOF
-#!/usr/bin/env bash
-set -euo pipefail
-cd "${app_dir}"
-
-$(write_remote_sudo_helpers "$sudo_mode")
-
-run_sudo apt-get update
-run_sudo apt-get install -y curl python3 python3-venv python3-pip
-
-if ! command -v uv >/dev/null 2>&1; then
-  curl -LsSf https://astral.sh/uv/install.sh | sh
-fi
-export PATH="\$HOME/.local/bin:\$PATH"
-
-uv venv .venv
-source .venv/bin/activate
-uv pip install -r requirements.txt
-
-run_sudo tee /etc/systemd/system/${APP_NAME}-api.service >/dev/null <<UNIT
-[Unit]
-Description=${APP_NAME} FastAPI
-After=network.target
-
-[Service]
-Type=simple
-User=${ssh_user}
-WorkingDirectory=${app_dir}
-ExecStart=${app_dir}/.venv/bin/uvicorn src.api.main:app --host 0.0.0.0 --port 8000
-Restart=always
-RestartSec=5
-
-[Install]
-WantedBy=multi-user.target
-UNIT
-
-run_sudo tee /etc/systemd/system/${APP_NAME}-streamlit.service >/dev/null <<UNIT
-[Unit]
-Description=${APP_NAME} Streamlit
-After=network.target
-
-[Service]
-Type=simple
-User=${ssh_user}
-WorkingDirectory=${app_dir}
-ExecStart=${app_dir}/.venv/bin/streamlit run streamlit_app.py --server.address 0.0.0.0 --server.port 8501
-Restart=always
-RestartSec=5
-
-[Install]
-WantedBy=multi-user.target
-UNIT
-
-run_sudo systemctl daemon-reload
-run_sudo systemctl enable ${APP_NAME}-api ${APP_NAME}-streamlit
-run_sudo systemctl restart ${APP_NAME}-api ${APP_NAME}-streamlit
-run_sudo systemctl --no-pager status ${APP_NAME}-api ${APP_NAME}-streamlit | cat
-EOF
-
-  chmod +x "$tmp_local_script"
-  scp -P "$ssh_port" "$tmp_local_script" "${ssh_target}:${tmp_remote_script}" >/dev/null
-  ssh "${ssh_tty_args[@]}" -p "$ssh_port" "$ssh_target" "SUDO_PASSWORD=$(printf %q "$sudo_password") bash ${tmp_remote_script}"
-  rm -f "$tmp_local_script"
-
-  log "VPS manual deployment completed"
+  die "vps-manual is deprecated for this repo. Use: scripts/deploy/deploy.sh vps-docker"
 }
 
 deploy_vps_docker() {
@@ -281,18 +173,15 @@ deploy_vps_docker() {
   local git_repo="${GIT_REPO:-}"
   local git_branch="${GIT_BRANCH:-main}"
   local sudo_password="${SUDO_PASSWORD:-}"
-  local mlflow_bind_ip="${MLFLOW_BIND_IP:-10.8.0.1}"
-  local mlflow_host_port="${MLFLOW_HOST_PORT:-5000}"
-  local api_domain="${API_DOMAIN:-}"
-  local app_domain="${APP_DOMAIN:-}"
-  local api_bind_ip="${API_BIND_IP:-127.0.0.1}"
-  local api_host_port="${API_HOST_PORT:-18000}"
-  local streamlit_bind_ip="${STREAMLIT_BIND_IP:-127.0.0.1}"
-  local streamlit_host_port="${STREAMLIT_HOST_PORT:-18501}"
-  local nginx_http_bind_ip="${NGINX_HTTP_BIND_IP:-127.0.0.1}"
-  local nginx_http_host_port="${NGINX_HTTP_HOST_PORT:-18080}"
-  local nginx_https_bind_ip="${NGINX_HTTPS_BIND_IP:-127.0.0.1}"
-  local nginx_https_host_port="${NGINX_HTTPS_HOST_PORT:-18443}"
+  local postgres_bind_host="${POSTGRES_BIND_HOST:-127.0.0.1}"
+  local postgres_host_port="${POSTGRES_HOST_PORT:-5432}"
+  local backend_bind_host="${BACKEND_BIND_HOST:-127.0.0.1}"
+  local backend_host_port="${BACKEND_HOST_PORT:-18000}"
+  local frontend_bind_host="${FRONTEND_BIND_HOST:-127.0.0.1}"
+  local frontend_host_port="${FRONTEND_HOST_PORT:-13000}"
+  local airflow_bind_host="${AIRFLOW_BIND_HOST:-127.0.0.1}"
+  local airflow_port="${AIRFLOW_PORT:-8088}"
+  local local_env_file="${LOCAL_ENV_FILE:-.env}"
   local sudo_mode
   local ssh_tty_args=()
   local tmp_local_script
@@ -301,24 +190,18 @@ deploy_vps_docker() {
   [ -n "$ssh_user" ] || die "SSH_USER is required"
   [ -n "$ssh_host" ] || die "SSH_HOST is required"
   [ -n "$git_repo" ] || die "GIT_REPO is required"
-  [ -n "$mlflow_bind_ip" ] || die "MLFLOW_BIND_IP is required"
-  [ -n "$mlflow_host_port" ] || die "MLFLOW_HOST_PORT is required"
-  [ -n "$api_bind_ip" ] || die "API_BIND_IP is required"
-  [ -n "$api_host_port" ] || die "API_HOST_PORT is required"
-  [ -n "$streamlit_bind_ip" ] || die "STREAMLIT_BIND_IP is required"
-  [ -n "$streamlit_host_port" ] || die "STREAMLIT_HOST_PORT is required"
-  [ -n "$nginx_http_bind_ip" ] || die "NGINX_HTTP_BIND_IP is required"
-  [ -n "$nginx_http_host_port" ] || die "NGINX_HTTP_HOST_PORT is required"
-  [ -n "$nginx_https_bind_ip" ] || die "NGINX_HTTPS_BIND_IP is required"
-  [ -n "$nginx_https_host_port" ] || die "NGINX_HTTPS_HOST_PORT is required"
+  [ -n "$postgres_bind_host" ] || die "POSTGRES_BIND_HOST is required"
+  [ -n "$postgres_host_port" ] || die "POSTGRES_HOST_PORT is required"
+  [ -n "$backend_bind_host" ] || die "BACKEND_BIND_HOST is required"
+  [ -n "$backend_host_port" ] || die "BACKEND_HOST_PORT is required"
+  [ -n "$frontend_bind_host" ] || die "FRONTEND_BIND_HOST is required"
+  [ -n "$frontend_host_port" ] || die "FRONTEND_HOST_PORT is required"
+  [ -n "$airflow_bind_host" ] || die "AIRFLOW_BIND_HOST is required"
+  [ -n "$airflow_port" ] || die "AIRFLOW_PORT is required"
 
   sudo_mode="$(remote_sudo_mode)"
   if [ "$sudo_mode" = "prompt" ]; then
     ssh_tty_args=(-tt)
-  fi
-
-  if [ "$mlflow_bind_ip" = "0.0.0.0" ] || [ "$mlflow_bind_ip" = "127.0.0.1" ]; then
-    die "MLflow must stay VPN-only on VPS. Set MLFLOW_BIND_IP to your VPN interface IP, e.g. 10.8.0.1"
   fi
 
   local ssh_target="${ssh_user}@${ssh_host}"
@@ -347,67 +230,48 @@ if ! run_sudo docker compose version >/dev/null 2>&1; then
   exit 1
 fi
 
-export MLFLOW_BIND_IP="${mlflow_bind_ip}"
-export MLFLOW_HOST_PORT="${mlflow_host_port}"
-export API_DOMAIN="${api_domain}"
-export APP_DOMAIN="${app_domain}"
-export API_BIND_IP="${api_bind_ip}"
-export API_HOST_PORT="${api_host_port}"
-export STREAMLIT_BIND_IP="${streamlit_bind_ip}"
-export STREAMLIT_HOST_PORT="${streamlit_host_port}"
-export NGINX_HTTP_BIND_IP="${nginx_http_bind_ip}"
-export NGINX_HTTP_HOST_PORT="${nginx_http_host_port}"
-export NGINX_HTTPS_BIND_IP="${nginx_https_bind_ip}"
-export NGINX_HTTPS_HOST_PORT="${nginx_https_host_port}"
+if [ ! -f "${local_env_file}" ] && [ -f ".env.example" ]; then
+  cp .env.example "${local_env_file}"
+fi
 
 run_compose() {
   run_sudo env \
-    MLFLOW_BIND_IP="${mlflow_bind_ip}" \
-    MLFLOW_HOST_PORT="${mlflow_host_port}" \
-    API_DOMAIN="${api_domain}" \
-    APP_DOMAIN="${app_domain}" \
-    API_BIND_IP="${api_bind_ip}" \
-    API_HOST_PORT="${api_host_port}" \
-    STREAMLIT_BIND_IP="${streamlit_bind_ip}" \
-    STREAMLIT_HOST_PORT="${streamlit_host_port}" \
-    NGINX_HTTP_BIND_IP="${nginx_http_bind_ip}" \
-    NGINX_HTTP_HOST_PORT="${nginx_http_host_port}" \
-    NGINX_HTTPS_BIND_IP="${nginx_https_bind_ip}" \
-    NGINX_HTTPS_HOST_PORT="${nginx_https_host_port}" \
-    docker compose -f docker-compose.yml -f docker-compose.prod.yml "\$@"
+    POSTGRES_BIND_HOST="${postgres_bind_host}" \
+    POSTGRES_HOST_PORT="${postgres_host_port}" \
+    BACKEND_BIND_HOST="${backend_bind_host}" \
+    BACKEND_HOST_PORT="${backend_host_port}" \
+    FRONTEND_BIND_HOST="${frontend_bind_host}" \
+    FRONTEND_HOST_PORT="${frontend_host_port}" \
+    AIRFLOW_BIND_HOST="${airflow_bind_host}" \
+    AIRFLOW_PORT="${airflow_port}" \
+    docker compose -f docker-compose.yml -f deploy/docker-compose.ovh.yml --env-file "${local_env_file}" "\$@"
 }
 
 run_compose down --remove-orphans || true
 
 if command -v ss >/dev/null 2>&1; then
-  if ss -ltn "sport = :${mlflow_host_port}" | awk 'NR>1 {print}' | grep -q .; then
-    echo "[deploy][error] Host port ${mlflow_host_port} is already in use on VPS." >&2
-    echo "[deploy][error] Set MLFLOW_HOST_PORT in your OVH env file, then redeploy." >&2
-    ss -ltnp "sport = :${mlflow_host_port}" || true
+  if ss -ltn "sport = :${postgres_host_port}" | awk 'NR>1 {print}' | grep -q .; then
+    echo "[deploy][error] Host port ${postgres_host_port} is already in use on VPS." >&2
+    echo "[deploy][error] Set POSTGRES_HOST_PORT in your OVH env file, then redeploy." >&2
+    ss -ltnp "sport = :${postgres_host_port}" || true
     exit 1
   fi
-  if ss -ltn "sport = :${api_host_port}" | awk 'NR>1 {print}' | grep -q .; then
-    echo "[deploy][error] Host port ${api_host_port} is already in use on VPS." >&2
-    echo "[deploy][error] Set API_HOST_PORT in your OVH env file, then redeploy." >&2
-    ss -ltnp "sport = :${api_host_port}" || true
+  if ss -ltn "sport = :${backend_host_port}" | awk 'NR>1 {print}' | grep -q .; then
+    echo "[deploy][error] Host port ${backend_host_port} is already in use on VPS." >&2
+    echo "[deploy][error] Set BACKEND_HOST_PORT in your OVH env file, then redeploy." >&2
+    ss -ltnp "sport = :${backend_host_port}" || true
     exit 1
   fi
-  if ss -ltn "sport = :${streamlit_host_port}" | awk 'NR>1 {print}' | grep -q .; then
-    echo "[deploy][error] Host port ${streamlit_host_port} is already in use on VPS." >&2
-    echo "[deploy][error] Set STREAMLIT_HOST_PORT in your OVH env file, then redeploy." >&2
-    ss -ltnp "sport = :${streamlit_host_port}" || true
+  if ss -ltn "sport = :${frontend_host_port}" | awk 'NR>1 {print}' | grep -q .; then
+    echo "[deploy][error] Host port ${frontend_host_port} is already in use on VPS." >&2
+    echo "[deploy][error] Set FRONTEND_HOST_PORT in your OVH env file, then redeploy." >&2
+    ss -ltnp "sport = :${frontend_host_port}" || true
     exit 1
   fi
-  if ss -ltn "sport = :${nginx_http_host_port}" | awk 'NR>1 {print}' | grep -q .; then
-    echo "[deploy][error] Host port ${nginx_http_host_port} is already in use on VPS." >&2
-    echo "[deploy][error] Set NGINX_HTTP_HOST_PORT in your OVH env file, then redeploy." >&2
-    ss -ltnp "sport = :${nginx_http_host_port}" || true
-    exit 1
-  fi
-  if ss -ltn "sport = :${nginx_https_host_port}" | awk 'NR>1 {print}' | grep -q .; then
-    echo "[deploy][error] Host port ${nginx_https_host_port} is already in use on VPS." >&2
-    echo "[deploy][error] Set NGINX_HTTPS_HOST_PORT in your OVH env file, then redeploy." >&2
-    ss -ltnp "sport = :${nginx_https_host_port}" || true
+  if ss -ltn "sport = :${airflow_port}" | awk 'NR>1 {print}' | grep -q .; then
+    echo "[deploy][error] Host port ${airflow_port} is already in use on VPS." >&2
+    echo "[deploy][error] Set AIRFLOW_PORT in your OVH env file, then redeploy." >&2
+    ss -ltnp "sport = :${airflow_port}" || true
     exit 1
   fi
 fi
@@ -427,11 +291,13 @@ EOF
 aws_build_and_push() {
   local repo_name="$1"
   local image_uri="$2"
+  local dockerfile="$3"
+  local context_dir="$4"
 
   aws ecr describe-repositories --repository-names "$repo_name" >/dev/null 2>&1 || \
     aws ecr create-repository --repository-name "$repo_name" >/dev/null
 
-  docker build -f "$ROOT_DIR/docker/Dockerfile" -t "$image_uri" "$ROOT_DIR"
+  docker build -f "$dockerfile" -t "$image_uri" "$context_dir"
   docker push "$image_uri"
 }
 
@@ -441,48 +307,48 @@ deploy_aws_apprunner() {
 
   local region="${AWS_REGION:-}"
   local account_id="${AWS_ACCOUNT_ID:-}"
-  local repo_api="${ECR_REPO_API:-market-screener-api}"
-  local repo_streamlit="${ECR_REPO_STREAMLIT:-market-screener-frontend}"
+  local repo_api="${ECR_REPO_API:-market-screener-backend}"
+  local repo_frontend="${ECR_REPO_FRONTEND:-market-screener-frontend}"
 
   [ -n "$region" ] || die "AWS_REGION is required"
   [ -n "$account_id" ] || die "AWS_ACCOUNT_ID is required"
 
   local api_image="${account_id}.dkr.ecr.${region}.amazonaws.com/${repo_api}:${IMAGE_TAG}"
-  local streamlit_image="${account_id}.dkr.ecr.${region}.amazonaws.com/${repo_streamlit}:${IMAGE_TAG}"
+  local frontend_image="${account_id}.dkr.ecr.${region}.amazonaws.com/${repo_frontend}:${IMAGE_TAG}"
 
   aws ecr get-login-password --region "$region" | \
     docker login --username AWS --password-stdin "${account_id}.dkr.ecr.${region}.amazonaws.com"
 
   log "Building and pushing API image: $api_image"
-  aws_build_and_push "$repo_api" "$api_image"
+  aws_build_and_push "$repo_api" "$api_image" "$ROOT_DIR/backend/Dockerfile" "$ROOT_DIR/backend"
 
-  log "Building and pushing Streamlit image: $streamlit_image"
-  aws_build_and_push "$repo_streamlit" "$streamlit_image"
+  log "Building and pushing frontend image: $frontend_image"
+  aws_build_and_push "$repo_frontend" "$frontend_image" "$ROOT_DIR/frontend/Dockerfile" "$ROOT_DIR/frontend"
 
   log "Deploying API service on App Runner"
   aws apprunner create-service \
     --region "$region" \
     --service-name "${APP_NAME}-api" \
-    --source-configuration "ImageRepository={ImageIdentifier=${api_image},ImageRepositoryType=ECR,ImageConfiguration={Port=8000,StartCommand='uvicorn src.api.main:app --host 0.0.0.0 --port 8000'}}" \
+    --source-configuration "ImageRepository={ImageIdentifier=${api_image},ImageRepositoryType=ECR,ImageConfiguration={Port=8000,StartCommand='uvicorn app.main:app --host 0.0.0.0 --port 8000'}}" \
     --instance-configuration "Cpu=1024,Memory=2048" \
     >/dev/null 2>&1 || \
   aws apprunner update-service \
     --region "$region" \
     --service-arn "$(aws apprunner list-services --region "$region" --query "ServiceSummaryList[?ServiceName=='${APP_NAME}-api'].ServiceArn | [0]" --output text)" \
-    --source-configuration "ImageRepository={ImageIdentifier=${api_image},ImageRepositoryType=ECR,ImageConfiguration={Port=8000,StartCommand='uvicorn src.api.main:app --host 0.0.0.0 --port 8000'}}" \
+    --source-configuration "ImageRepository={ImageIdentifier=${api_image},ImageRepositoryType=ECR,ImageConfiguration={Port=8000,StartCommand='uvicorn app.main:app --host 0.0.0.0 --port 8000'}}" \
     >/dev/null
 
-  log "Deploying Streamlit service on App Runner"
+  log "Deploying frontend service on App Runner"
   aws apprunner create-service \
     --region "$region" \
-    --service-name "${APP_NAME}-streamlit" \
-    --source-configuration "ImageRepository={ImageIdentifier=${streamlit_image},ImageRepositoryType=ECR,ImageConfiguration={Port=8501,StartCommand='streamlit run streamlit_app.py --server.address 0.0.0.0 --server.port 8501'}}" \
+    --service-name "${APP_NAME}-frontend" \
+    --source-configuration "ImageRepository={ImageIdentifier=${frontend_image},ImageRepositoryType=ECR,ImageConfiguration={Port=3000,StartCommand='serve -s dist -l 3000'}}" \
     --instance-configuration "Cpu=1024,Memory=2048" \
     >/dev/null 2>&1 || \
   aws apprunner update-service \
     --region "$region" \
-    --service-arn "$(aws apprunner list-services --region "$region" --query "ServiceSummaryList[?ServiceName=='${APP_NAME}-streamlit'].ServiceArn | [0]" --output text)" \
-    --source-configuration "ImageRepository={ImageIdentifier=${streamlit_image},ImageRepositoryType=ECR,ImageConfiguration={Port=8501,StartCommand='streamlit run streamlit_app.py --server.address 0.0.0.0 --server.port 8501'}}" \
+    --service-arn "$(aws apprunner list-services --region "$region" --query "ServiceSummaryList[?ServiceName=='${APP_NAME}-frontend'].ServiceArn | [0]" --output text)" \
+    --source-configuration "ImageRepository={ImageIdentifier=${frontend_image},ImageRepositoryType=ECR,ImageConfiguration={Port=3000,StartCommand='serve -s dist -l 3000'}}" \
     >/dev/null
 
   log "AWS App Runner deployment completed"
@@ -512,13 +378,13 @@ deploy_azure_containerapps() {
   login_server="$(az acr show -n "$acr_name" -g "$rg" --query loginServer -o tsv)"
 
   local api_image="${login_server}/${APP_NAME}-api:${IMAGE_TAG}"
-  local streamlit_image="${login_server}/${APP_NAME}-streamlit:${IMAGE_TAG}"
+  local frontend_image="${login_server}/${APP_NAME}-frontend:${IMAGE_TAG}"
 
   az acr login -n "$acr_name"
-  docker build -f "$ROOT_DIR/docker/Dockerfile" -t "$api_image" "$ROOT_DIR"
+  docker build -f "$ROOT_DIR/backend/Dockerfile" -t "$api_image" "$ROOT_DIR/backend"
   docker push "$api_image"
-  docker build -f "$ROOT_DIR/docker/Dockerfile" -t "$streamlit_image" "$ROOT_DIR"
-  docker push "$streamlit_image"
+  docker build -f "$ROOT_DIR/frontend/Dockerfile" -t "$frontend_image" "$ROOT_DIR/frontend"
+  docker push "$frontend_image"
 
   az containerapp env show -n "$env_name" -g "$rg" >/dev/null 2>&1 || \
     az containerapp env create -n "$env_name" -g "$rg" -l "$location" >/dev/null
@@ -531,7 +397,7 @@ deploy_azure_containerapps() {
     -n "${APP_NAME}-api" -g "$rg" --environment "$env_name" \
     --image "$api_image" --target-port 8000 --ingress external \
     --registry-server "$login_server" --registry-username "$acr_user" --registry-password "$acr_pass" \
-    --command uvicorn --args "src.api.main:app" "--host" "0.0.0.0" "--port" "8000" \
+    --command uvicorn --args "app.main:app" "--host" "0.0.0.0" "--port" "8000" \
     --cpu 1.0 --memory 2.0Gi >/dev/null 2>&1 || \
   az containerapp update \
     -n "${APP_NAME}-api" -g "$rg" \
@@ -539,15 +405,15 @@ deploy_azure_containerapps() {
     --set-env-vars "PORT=8000" >/dev/null
 
   az containerapp create \
-    -n "${APP_NAME}-streamlit" -g "$rg" --environment "$env_name" \
-    --image "$streamlit_image" --target-port 8501 --ingress external \
+    -n "${APP_NAME}-frontend" -g "$rg" --environment "$env_name" \
+    --image "$frontend_image" --target-port 3000 --ingress external \
     --registry-server "$login_server" --registry-username "$acr_user" --registry-password "$acr_pass" \
-    --command streamlit --args "run" "streamlit_app.py" "--server.address" "0.0.0.0" "--server.port" "8501" \
+    --command serve --args "-s" "dist" "-l" "3000" \
     --cpu 1.0 --memory 2.0Gi >/dev/null 2>&1 || \
   az containerapp update \
-    -n "${APP_NAME}-streamlit" -g "$rg" \
-    --image "$streamlit_image" \
-    --set-env-vars "PORT=8501" >/dev/null
+    -n "${APP_NAME}-frontend" -g "$rg" \
+    --image "$frontend_image" \
+    --set-env-vars "PORT=3000" >/dev/null
 
   log "Azure Container Apps deployment completed"
 }
@@ -570,14 +436,14 @@ deploy_gcp_cloudrun() {
 
   local reg_host="${region}-docker.pkg.dev"
   local api_image="${reg_host}/${project_id}/${ar_repo}/${APP_NAME}-api:${IMAGE_TAG}"
-  local streamlit_image="${reg_host}/${project_id}/${ar_repo}/${APP_NAME}-streamlit:${IMAGE_TAG}"
+  local frontend_image="${reg_host}/${project_id}/${ar_repo}/${APP_NAME}-frontend:${IMAGE_TAG}"
 
   gcloud auth configure-docker "$reg_host" --quiet
 
-  docker build -f "$ROOT_DIR/docker/Dockerfile" -t "$api_image" "$ROOT_DIR"
+  docker build -f "$ROOT_DIR/backend/Dockerfile" -t "$api_image" "$ROOT_DIR/backend"
   docker push "$api_image"
-  docker build -f "$ROOT_DIR/docker/Dockerfile" -t "$streamlit_image" "$ROOT_DIR"
-  docker push "$streamlit_image"
+  docker build -f "$ROOT_DIR/frontend/Dockerfile" -t "$frontend_image" "$ROOT_DIR/frontend"
+  docker push "$frontend_image"
 
   gcloud run deploy "${APP_NAME}-api" \
     --image "$api_image" \
@@ -586,17 +452,17 @@ deploy_gcp_cloudrun() {
     --allow-unauthenticated \
     --port 8000 \
     --command uvicorn \
-    --args src.api.main:app,--host,0.0.0.0,--port,8000 \
+    --args app.main:app,--host,0.0.0.0,--port,8000 \
     --cpu 1 --memory 2Gi --min-instances 0 --max-instances 3
 
-  gcloud run deploy "${APP_NAME}-streamlit" \
-    --image "$streamlit_image" \
+  gcloud run deploy "${APP_NAME}-frontend" \
+    --image "$frontend_image" \
     --region "$region" \
     --platform managed \
     --allow-unauthenticated \
-    --port 8501 \
-    --command streamlit \
-    --args run,streamlit_app.py,--server.address,0.0.0.0,--server.port,8501 \
+    --port 3000 \
+    --command serve \
+    --args -s,dist,-l,3000 \
     --cpu 1 --memory 2Gi --min-instances 0 --max-instances 2
 
   log "GCP Cloud Run deployment completed"
@@ -607,10 +473,12 @@ deploy_k8s_core() {
   local namespace="market-screener"
 
   local api_image="${K8S_API_IMAGE:-}"
-  local streamlit_image="${K8S_STREAMLIT_IMAGE:-}"
+  local frontend_image="${K8S_FRONTEND_IMAGE:-}"
 
   [ -n "$api_image" ] || die "K8S_API_IMAGE is required"
-  [ -n "$streamlit_image" ] || die "K8S_STREAMLIT_IMAGE is required"
+  if [ -n "$frontend_image" ]; then
+    log "K8S_FRONTEND_IMAGE is provided but frontend k8s manifests are not part of this repo base yet; skipping frontend image rollout"
+  fi
 
   if [ -n "${KUBE_CONTEXT:-}" ]; then
     kubectl config use-context "$KUBE_CONTEXT"
@@ -620,14 +488,9 @@ deploy_k8s_core() {
   kubectl apply -f "$ROOT_DIR/deploy/k8s/base/configmap.yaml"
   kubectl apply -f "$ROOT_DIR/deploy/k8s/base/api-deployment.yaml"
   kubectl apply -f "$ROOT_DIR/deploy/k8s/base/api-service.yaml"
-  kubectl apply -f "$ROOT_DIR/deploy/k8s/base/streamlit-deployment.yaml"
-  kubectl apply -f "$ROOT_DIR/deploy/k8s/base/streamlit-service.yaml"
-
   kubectl -n "$namespace" set image deployment/market-screener-api api="$api_image"
-  kubectl -n "$namespace" set image deployment/market-screener-frontend streamlit="$streamlit_image"
 
   kubectl -n "$namespace" rollout status deployment/market-screener-api --timeout=300s
-  kubectl -n "$namespace" rollout status deployment/market-screener-frontend --timeout=300s
   kubectl -n "$namespace" get svc,pods
 
   log "Kubernetes deployment completed"
