@@ -299,6 +299,13 @@ resolve_port() {
     return 0
   fi
 
+  # If the port is already published by an existing Docker container,
+  # keep it to allow in-place upgrades without forcing a full teardown.
+  if run_sudo docker ps --format '{{.Ports}}' | grep -qE "(^|[ ,])[^,]*:${wanted}->"; then
+    printf '%s' "$wanted"
+    return 0
+  fi
+
   if [ "${AUTO_PORT_REMAP}" = "true" ]; then
     local remapped
     remapped="$(pick_free_port $((wanted + 1)))" || {
