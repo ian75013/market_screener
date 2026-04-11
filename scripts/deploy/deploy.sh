@@ -343,8 +343,6 @@ run_compose() {
     docker compose -f docker-compose.yml -f deploy/docker-compose.ovh.yml --env-file "${LOCAL_ENV_FILE}" "$@"
 }
 
-run_compose down --remove-orphans || true
-
 run_compose up --build -d --remove-orphans
 run_compose ps
 EOF
