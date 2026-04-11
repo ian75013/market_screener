@@ -55,8 +55,8 @@ configure_caddy() {
   local app_domain="${APP_DOMAIN:-}"
   local caddy_email="${CADDY_EMAIL:-}"
   local sudo_password="${SUDO_PASSWORD:-}"
-  local api_host_port="${API_HOST_PORT:-18000}"
-  local streamlit_host_port="${STREAMLIT_HOST_PORT:-18501}"
+  local backend_host_port="${BACKEND_HOST_PORT:-18000}"
+  local frontend_host_port="${FRONTEND_HOST_PORT:-13000}"
   local ssh_tty_args=()
 
   if [ -z "$sudo_password" ]; then
@@ -87,8 +87,8 @@ set -euo pipefail
 API_DOMAIN="${API_DOMAIN}"
 APP_DOMAIN="${APP_DOMAIN}"
 CADDY_EMAIL="${CADDY_EMAIL}"
-API_HOST_PORT="${API_HOST_PORT}"
-STREAMLIT_HOST_PORT="${STREAMLIT_HOST_PORT}"
+BACKEND_HOST_PORT="${BACKEND_HOST_PORT}"
+FRONTEND_HOST_PORT="${FRONTEND_HOST_PORT}"
 
 sudo apt-get update
 sudo apt-get install -y debian-keyring debian-archive-keyring apt-transport-https curl gpg
@@ -104,12 +104,12 @@ sudo tee /etc/caddy/Caddyfile >/dev/null <<CADDY
 
 ${API_DOMAIN} {
   encode gzip zstd
-  reverse_proxy 127.0.0.1:${API_HOST_PORT}
+  reverse_proxy 127.0.0.1:${BACKEND_HOST_PORT}
 }
 
 ${APP_DOMAIN} {
   encode gzip zstd
-  reverse_proxy 127.0.0.1:${STREAMLIT_HOST_PORT}
+  reverse_proxy 127.0.0.1:${FRONTEND_HOST_PORT}
 }
 CADDY
 
@@ -128,7 +128,7 @@ SCRIPT_EOF
   scp -P "$ssh_port" "$tmp_local_script" "${ssh_target}:${tmp_remote_script}"
 
   ssh "${ssh_tty_args[@]}" -p "$ssh_port" "$ssh_target" \
-    "API_DOMAIN=$(printf %q "$api_domain") APP_DOMAIN=$(printf %q "$app_domain") CADDY_EMAIL=$(printf %q "$caddy_email") API_HOST_PORT=$(printf %q "$api_host_port") STREAMLIT_HOST_PORT=$(printf %q "$streamlit_host_port") bash ${tmp_remote_script}"
+    "API_DOMAIN=$(printf %q "$api_domain") APP_DOMAIN=$(printf %q "$app_domain") CADDY_EMAIL=$(printf %q "$caddy_email") BACKEND_HOST_PORT=$(printf %q "$backend_host_port") FRONTEND_HOST_PORT=$(printf %q "$frontend_host_port") bash ${tmp_remote_script}"
 
   rm -f "$tmp_local_script"
   if [ "$XTRACE_WAS_ENABLED" -eq 1 ]; then
@@ -144,10 +144,11 @@ configure_nginx() {
   local app_domain="${APP_DOMAIN:-}"
   local app_dir="${APP_DIR:-/opt/market-screener}"
   local sudo_password="${SUDO_PASSWORD:-}"
-  local api_host_port="${API_HOST_PORT:-18000}"
-  local streamlit_host_port="${STREAMLIT_HOST_PORT:-18501}"
+  local backend_host_port="${BACKEND_HOST_PORT:-18000}"
+  local frontend_host_port="${FRONTEND_HOST_PORT:-13000}"
   local letsencrypt_email="${LETSENCRYPT_EMAIL:-${CADDY_EMAIL:-}}"
   local auto_certbot_once="${AUTO_CERTBOT_ONCE:-true}"
+  local force_http_only="${FORCE_HTTP_ONLY:-false}"
   local apache_ssl_fallback_domain="${APACHE_SSL_FALLBACK_DOMAIN:-}"
   local apache_api_ssl_cert="${APACHE_API_SSL_CERT:-/etc/letsencrypt/live/${api_domain}/fullchain.pem}"
   local apache_api_ssl_key="${APACHE_API_SSL_KEY:-/etc/letsencrypt/live/${api_domain}/privkey.pem}"
@@ -188,8 +189,8 @@ configure_nginx() {
   ProxyPreserveHost On
   ProxyRequests Off
   ProxyTimeout 3600
-  ProxyPass / http://127.0.0.1:${api_host_port}/ retry=0 timeout=3600
-  ProxyPassReverse / http://127.0.0.1:${api_host_port}/
+  ProxyPass / http://127.0.0.1:${backend_host_port}/ retry=0 timeout=3600
+  ProxyPassReverse / http://127.0.0.1:${backend_host_port}/
   RequestHeader set X-Forwarded-Proto "http"
 </VirtualHost>
 
@@ -198,10 +199,10 @@ configure_nginx() {
   ProxyPreserveHost On
   ProxyRequests Off
   ProxyTimeout 3600
-  ProxyPass /_stcore/stream ws://127.0.0.1:${streamlit_host_port}/_stcore/stream retry=0 timeout=3600
-  ProxyPassReverse /_stcore/stream ws://127.0.0.1:${streamlit_host_port}/_stcore/stream
-  ProxyPass / http://127.0.0.1:${streamlit_host_port}/ retry=0 timeout=3600
-  ProxyPassReverse / http://127.0.0.1:${streamlit_host_port}/
+  ProxyPass /_stcore/stream ws://127.0.0.1:${frontend_host_port}/_stcore/stream retry=0 timeout=3600
+  ProxyPassReverse /_stcore/stream ws://127.0.0.1:${frontend_host_port}/_stcore/stream
+  ProxyPass / http://127.0.0.1:${frontend_host_port}/ retry=0 timeout=3600
+  ProxyPassReverse / http://127.0.0.1:${frontend_host_port}/
   RequestHeader set X-Forwarded-Proto "http"
 </VirtualHost>
 EOF
@@ -340,7 +341,13 @@ if [ "${AUTO_CERTBOT_ONCE:-true}" = "true" ]; then
   fi
 fi
 
-if [ "$api_cert_ok" = "true" ] && [ "$app_cert_ok" = "true" ]; then
+if [ "${FORCE_HTTP_ONLY:-false}" = "true" ]; then
+  run_sudo install -m 644 "$TMP_REMOTE_APACHE_CONF" /etc/apache2/sites-available/market-screener.conf
+  run_sudo a2dissite market-screener-ssl >/dev/null 2>&1 || true
+  run_sudo apache2ctl configtest
+  run_sudo systemctl reload apache2
+  echo "[deploy-ovh] HTTPS disabled by FORCE_HTTP_ONLY=true; Apache configured in HTTP mode." >&2
+elif [ "$api_cert_ok" = "true" ] && [ "$app_cert_ok" = "true" ]; then
   run_sudo install -m 644 "$TMP_REMOTE_APACHE_REDIRECT_CONF" /etc/apache2/sites-available/market-screener.conf
   api_cert_resolved="${api_pair%%|*}"
   api_key_resolved="${api_pair##*|}"
@@ -359,8 +366,8 @@ if [ "$api_cert_ok" = "true" ] && [ "$app_cert_ok" = "true" ]; then
   ProxyRequests Off
   SSLProxyEngine On
   ProxyTimeout 3600
-  ProxyPass / http://127.0.0.1:${API_HOST_PORT}/ retry=0 timeout=3600
-  ProxyPassReverse / http://127.0.0.1:${API_HOST_PORT}/
+  ProxyPass / http://127.0.0.1:${BACKEND_HOST_PORT}/ retry=0 timeout=3600
+  ProxyPassReverse / http://127.0.0.1:${BACKEND_HOST_PORT}/
   RequestHeader set X-Forwarded-Proto "https"
 </VirtualHost>
 
@@ -374,10 +381,10 @@ if [ "$api_cert_ok" = "true" ] && [ "$app_cert_ok" = "true" ]; then
   ProxyRequests Off
   SSLProxyEngine On
   ProxyTimeout 3600
-  ProxyPass /_stcore/stream ws://127.0.0.1:${STREAMLIT_HOST_PORT}/_stcore/stream retry=0 timeout=3600
-  ProxyPassReverse /_stcore/stream ws://127.0.0.1:${STREAMLIT_HOST_PORT}/_stcore/stream
-  ProxyPass / http://127.0.0.1:${STREAMLIT_HOST_PORT}/ retry=0 timeout=3600
-  ProxyPassReverse / http://127.0.0.1:${STREAMLIT_HOST_PORT}/
+  ProxyPass /_stcore/stream ws://127.0.0.1:${FRONTEND_HOST_PORT}/_stcore/stream retry=0 timeout=3600
+  ProxyPassReverse /_stcore/stream ws://127.0.0.1:${FRONTEND_HOST_PORT}/_stcore/stream
+  ProxyPass / http://127.0.0.1:${FRONTEND_HOST_PORT}/ retry=0 timeout=3600
+  ProxyPassReverse / http://127.0.0.1:${FRONTEND_HOST_PORT}/
   RequestHeader set X-Forwarded-Proto "https"
 </VirtualHost>
 </IfModule>
@@ -402,7 +409,7 @@ SCRIPT_EOF
   scp -P "$ssh_port" "$tmp_local_apache_redirect_conf" "${ssh_target}:${tmp_remote_apache_redirect_conf}"
   scp -P "$ssh_port" "$tmp_local_apache_script" "${ssh_target}:${tmp_remote_apache_script}"
   ssh "${ssh_tty_args[@]}" -p "$ssh_port" "$ssh_target" \
-    "SUDO_PASSWORD=$(printf %q "$sudo_password") USE_REMOTE_SUDO_PROMPT=$(printf %q "${USE_REMOTE_SUDO_PROMPT:-false}") TMP_REMOTE_APACHE_CONF=$(printf %q "$tmp_remote_apache_conf") TMP_REMOTE_APACHE_REDIRECT_CONF=$(printf %q "$tmp_remote_apache_redirect_conf") API_DOMAIN=$(printf %q "$api_domain") APP_DOMAIN=$(printf %q "$app_domain") API_HOST_PORT=$(printf %q "$api_host_port") STREAMLIT_HOST_PORT=$(printf %q "$streamlit_host_port") APACHE_API_SSL_CERT=$(printf %q "$apache_api_ssl_cert") APACHE_API_SSL_KEY=$(printf %q "$apache_api_ssl_key") APACHE_APP_SSL_CERT=$(printf %q "$apache_app_ssl_cert") APACHE_APP_SSL_KEY=$(printf %q "$apache_app_ssl_key") APACHE_SSL_FALLBACK_DOMAIN=$(printf %q "$apache_ssl_fallback_domain") LETSENCRYPT_EMAIL=$(printf %q "$letsencrypt_email") AUTO_CERTBOT_ONCE=$(printf %q "$auto_certbot_once") bash ${tmp_remote_apache_script}"
+    "SUDO_PASSWORD=$(printf %q "$sudo_password") USE_REMOTE_SUDO_PROMPT=$(printf %q "${USE_REMOTE_SUDO_PROMPT:-false}") TMP_REMOTE_APACHE_CONF=$(printf %q "$tmp_remote_apache_conf") TMP_REMOTE_APACHE_REDIRECT_CONF=$(printf %q "$tmp_remote_apache_redirect_conf") API_DOMAIN=$(printf %q "$api_domain") APP_DOMAIN=$(printf %q "$app_domain") BACKEND_HOST_PORT=$(printf %q "$backend_host_port") FRONTEND_HOST_PORT=$(printf %q "$frontend_host_port") APACHE_API_SSL_CERT=$(printf %q "$apache_api_ssl_cert") APACHE_API_SSL_KEY=$(printf %q "$apache_api_ssl_key") APACHE_APP_SSL_CERT=$(printf %q "$apache_app_ssl_cert") APACHE_APP_SSL_KEY=$(printf %q "$apache_app_ssl_key") APACHE_SSL_FALLBACK_DOMAIN=$(printf %q "$apache_ssl_fallback_domain") LETSENCRYPT_EMAIL=$(printf %q "$letsencrypt_email") AUTO_CERTBOT_ONCE=$(printf %q "$auto_certbot_once") FORCE_HTTP_ONLY=$(printf %q "$force_http_only") bash ${tmp_remote_apache_script}"
   echo "[deploy-ovh] Apache reverse proxy configured." >&2
 
   rm -f "$tmp_local_apache_conf" "$tmp_local_apache_redirect_conf" "$tmp_local_apache_script"

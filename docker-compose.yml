@@ -7,8 +7,8 @@ services:
       POSTGRES_USER: ${POSTGRES_USER:-screener_user}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-screener_password_dev}
     volumes:
-      - postgres_data:/var/lib/postgresql/data
     ports:
+      - "${POSTGRES_BIND_HOST:-127.0.0.1}:${POSTGRES_HOST_PORT:-5432}:5432"
       - "${POSTGRES_BIND_HOST:-0.0.0.0}:${POSTGRES_HOST_PORT:-5432}:5432"
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-screener_user} -d ${POSTGRES_DB:-market_screener}"]
@@ -102,8 +102,8 @@ services:
       AIRFLOW__CORE__EXECUTOR: LocalExecutor
       AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://${POSTGRES_USER:-screener_user}:${POSTGRES_PASSWORD:-screener_password_dev}@${POSTGRES_HOST:-postgres}:${POSTGRES_PORT:-5432}/${POSTGRES_DB:-market_screener}
       AIRFLOW__CORE__FERNET_KEY: ""
-      AIRFLOW__CORE__LOAD_EXAMPLES: "False"
-      AIRFLOW__WEBSERVER__RBAC: "True"
+    ports:
+      - "${BACKEND_BIND_HOST:-127.0.0.1}:${BACKEND_HOST_PORT:-18000}:8000"
       AIRFLOW_UID: ${AIRFLOW_UID:-50000}
       AIRFLOW_INTRADAY_CRON: ${AIRFLOW_INTRADAY_CRON:-*/30 6-22 * * 1-5}
       AIRFLOW_INTRADAY_MIN_REQUIRED: ${AIRFLOW_INTRADAY_MIN_REQUIRED:-8}
@@ -147,8 +147,8 @@ services:
     image: apache/airflow:2.10.5-python3.12
     container_name: market-screener-airflow-scheduler
     depends_on:
-      postgres:
-        condition: service_healthy
+      ports:
+        - "${FRONTEND_BIND_HOST:-127.0.0.1}:${FRONTEND_HOST_PORT:-13000}:3000"
       airflow-init:
         condition: service_completed_successfully
       backend:
