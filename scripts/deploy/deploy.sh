@@ -218,16 +218,37 @@ deploy_vps_docker() {
   log "Installing Docker and launching services"
   tmp_local_script="$(mktemp)"
   tmp_remote_script="/tmp/${APP_NAME}-docker-deploy.sh"
-  cat > "$tmp_local_script" <<EOF
+  cat > "$tmp_local_script" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
-cd "${app_dir}"
+cd "${APP_DIR}"
 
-$(write_remote_sudo_helpers "$sudo_mode")
+run_sudo() {
+  if [ "${USE_REMOTE_SUDO_PROMPT:-false}" = "true" ]; then
+    sudo -v
+    sudo "$@"
+  elif [ -n "${SUDO_PASSWORD:-}" ]; then
+    printf '%s\n' "${SUDO_PASSWORD}" | sudo -S -p '' "$@"
+  else
+    sudo "$@"
+  fi
+}
+
+POSTGRES_BIND_HOST="${POSTGRES_BIND_HOST:-127.0.0.1}"
+POSTGRES_HOST_PORT="${POSTGRES_HOST_PORT:-5432}"
+BACKEND_BIND_HOST="${BACKEND_BIND_HOST:-127.0.0.1}"
+BACKEND_HOST_PORT="${BACKEND_HOST_PORT:-18000}"
+FRONTEND_BIND_HOST="${FRONTEND_BIND_HOST:-127.0.0.1}"
+FRONTEND_HOST_PORT="${FRONTEND_HOST_PORT:-13000}"
+AIRFLOW_BIND_HOST="${AIRFLOW_BIND_HOST:-127.0.0.1}"
+AIRFLOW_PORT="${AIRFLOW_PORT:-8088}"
+LOCAL_ENV_FILE="${LOCAL_ENV_FILE:-.env}"
+AUTO_PORT_REMAP="${AUTO_PORT_REMAP:-true}"
+SSH_USER_EFFECTIVE="${SSH_USER_EFFECTIVE:-ubuntu}"
 
 if ! command -v docker >/dev/null 2>&1; then
   curl -fsSL https://get.docker.com | sh
-  run_sudo usermod -aG docker ${ssh_user}
+  run_sudo usermod -aG docker "${SSH_USER_EFFECTIVE}"
 fi
 
 if ! run_sudo docker compose version >/dev/null 2>&1; then
@@ -235,8 +256,8 @@ if ! run_sudo docker compose version >/dev/null 2>&1; then
   exit 1
 fi
 
-if [ ! -f "${local_env_file}" ] && [ -f ".env.example" ]; then
-  cp .env.example "${local_env_file}"
+if [ ! -f "${LOCAL_ENV_FILE}" ] && [ -f ".env.example" ]; then
+  cp .env.example "${LOCAL_ENV_FILE}"
 fi
 
 if ! command -v ss >/dev/null 2>&1; then
@@ -270,7 +291,7 @@ resolve_port() {
     return 0
   fi
 
-  if [ "${auto_port_remap}" = "true" ]; then
+  if [ "${AUTO_PORT_REMAP}" = "true" ]; then
     local remapped
     remapped="$(pick_free_port $((wanted + 1)))" || {
       echo "[deploy][error] No free port found near ${wanted} for ${name}" >&2
@@ -287,29 +308,29 @@ resolve_port() {
   exit 1
 }
 
-postgres_host_port="$(resolve_port POSTGRES_HOST_PORT "${postgres_host_port}")"
-backend_host_port="$(resolve_port BACKEND_HOST_PORT "${backend_host_port}")"
-frontend_host_port="$(resolve_port FRONTEND_HOST_PORT "${frontend_host_port}")"
-airflow_port="$(resolve_port AIRFLOW_PORT "${airflow_port}")"
+POSTGRES_HOST_PORT="$(resolve_port POSTGRES_HOST_PORT "${POSTGRES_HOST_PORT}")"
+BACKEND_HOST_PORT="$(resolve_port BACKEND_HOST_PORT "${BACKEND_HOST_PORT}")"
+FRONTEND_HOST_PORT="$(resolve_port FRONTEND_HOST_PORT "${FRONTEND_HOST_PORT}")"
+AIRFLOW_PORT="$(resolve_port AIRFLOW_PORT "${AIRFLOW_PORT}")"
 
-if ! ip -o addr show | grep -q " ${airflow_bind_host}/"; then
-  echo "[deploy][warn] AIRFLOW_BIND_HOST=${airflow_bind_host} not found on VPS, fallback to 127.0.0.1" >&2
-  airflow_bind_host="127.0.0.1"
+if ! ip -o addr show | grep -q " ${AIRFLOW_BIND_HOST}/"; then
+  echo "[deploy][warn] AIRFLOW_BIND_HOST=${AIRFLOW_BIND_HOST} not found on VPS, fallback to 127.0.0.1" >&2
+  AIRFLOW_BIND_HOST="127.0.0.1"
 fi
 
-echo "[deploy] Effective ports: postgres=${postgres_host_port}, backend=${backend_host_port}, frontend=${frontend_host_port}, airflow=${airflow_port}" >&2
+echo "[deploy] Effective ports: postgres=${POSTGRES_HOST_PORT}, backend=${BACKEND_HOST_PORT}, frontend=${FRONTEND_HOST_PORT}, airflow=${AIRFLOW_PORT}" >&2
 
 run_compose() {
   run_sudo env \
-    POSTGRES_BIND_HOST="${postgres_bind_host}" \
-    POSTGRES_HOST_PORT="${postgres_host_port}" \
-    BACKEND_BIND_HOST="${backend_bind_host}" \
-    BACKEND_HOST_PORT="${backend_host_port}" \
-    FRONTEND_BIND_HOST="${frontend_bind_host}" \
-    FRONTEND_HOST_PORT="${frontend_host_port}" \
-    AIRFLOW_BIND_HOST="${airflow_bind_host}" \
-    AIRFLOW_PORT="${airflow_port}" \
-    docker compose -f docker-compose.yml -f deploy/docker-compose.ovh.yml --env-file "${local_env_file}" "\$@"
+    POSTGRES_BIND_HOST="${POSTGRES_BIND_HOST}" \
+    POSTGRES_HOST_PORT="${POSTGRES_HOST_PORT}" \
+    BACKEND_BIND_HOST="${BACKEND_BIND_HOST}" \
+    BACKEND_HOST_PORT="${BACKEND_HOST_PORT}" \
+    FRONTEND_BIND_HOST="${FRONTEND_BIND_HOST}" \
+    FRONTEND_HOST_PORT="${FRONTEND_HOST_PORT}" \
+    AIRFLOW_BIND_HOST="${AIRFLOW_BIND_HOST}" \
+    AIRFLOW_PORT="${AIRFLOW_PORT}" \
+    docker compose -f docker-compose.yml -f deploy/docker-compose.ovh.yml --env-file "${LOCAL_ENV_FILE}" "$@"
 }
 
 run_compose down --remove-orphans || true
@@ -320,7 +341,22 @@ EOF
 
   chmod +x "$tmp_local_script"
   scp -P "$ssh_port" "$tmp_local_script" "${ssh_target}:${tmp_remote_script}" >/dev/null
-  ssh "${ssh_tty_args[@]}" -p "$ssh_port" "$ssh_target" "SUDO_PASSWORD=$(printf %q "$sudo_password") bash ${tmp_remote_script}"
+  ssh "${ssh_tty_args[@]}" -p "$ssh_port" "$ssh_target" \
+    "SUDO_PASSWORD=$(printf %q "$sudo_password") \
+USE_REMOTE_SUDO_PROMPT=$(printf %q "$( [ "$sudo_mode" = "prompt" ] && echo true || echo false )") \
+SSH_USER_EFFECTIVE=$(printf %q "$ssh_user") \
+APP_DIR=$(printf %q "$app_dir") \
+LOCAL_ENV_FILE=$(printf %q "$local_env_file") \
+AUTO_PORT_REMAP=$(printf %q "$auto_port_remap") \
+POSTGRES_BIND_HOST=$(printf %q "$postgres_bind_host") \
+POSTGRES_HOST_PORT=$(printf %q "$postgres_host_port") \
+BACKEND_BIND_HOST=$(printf %q "$backend_bind_host") \
+BACKEND_HOST_PORT=$(printf %q "$backend_host_port") \
+FRONTEND_BIND_HOST=$(printf %q "$frontend_bind_host") \
+FRONTEND_HOST_PORT=$(printf %q "$frontend_host_port") \
+AIRFLOW_BIND_HOST=$(printf %q "$airflow_bind_host") \
+AIRFLOW_PORT=$(printf %q "$airflow_port") \
+bash ${tmp_remote_script}"
   rm -f "$tmp_local_script"
 
   log "VPS docker deployment completed"
