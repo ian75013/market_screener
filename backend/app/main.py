@@ -222,6 +222,9 @@ cors_origins = [
     "http://127.0.0.1:5173",      # Vite localhost
     "http://localhost:8080",      # Nginx
     "http://127.0.0.1:8080",      # Nginx localhost
+    "https://market.screener.doctumconsilium.com",      # Frontend production domain
+    "https://www.market.screener.doctumconsilium.com",  # Optional WWW alias
+    "http://market.screener.doctumconsilium.com",       # HTTP fallback during redirects
 ]
 
 # Allow all origins in development, restrict in production
