@@ -291,7 +291,7 @@ docker compose up --build
 3. Lancer:
 
 ```bash
-./scripts/deploy_market_screener_ovh.sh deploy/scripts/env.ovh
+bash scripts/deploy/deploy.ovh.sh docker deploy/scripts/env.ovh
 ```
 
 4. Vérifier:

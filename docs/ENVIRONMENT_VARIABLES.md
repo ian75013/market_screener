@@ -78,27 +78,39 @@ FUNDAMENTALS_ONLY_MISSING=True
 ## Airflow Intraday Pipeline
 
 ```env
+AIRFLOW_INTRADAY_CRON=*/30 6-22 * * 1-5
+  # Scheduler cadence (UTC)
+
+AIRFLOW_INTRADAY_MIN_REQUIRED=8
+  # Minimum rows expected after intraday run
+
 AIRFLOW_INTRADAY_FETCH_MIN_VALID=24
   # Stop after N valid rows (light threshold)
 
-AIRFLOW_INTRADAY_RETRIES=2
+AIRFLOW_INTRADAY_PROVIDER_RETRIES=2
   # Max retries per chunk
 
-AIRFLOW_INTRADAY_CHUNK_SIZE=8
-  # Tickers per API batch
+AIRFLOW_INTRADAY_PROVIDER_RETRY_DELAY_SECONDS=2
+  # Delay in seconds between retries
 ```
 
 ## Airflow Nightly Pipeline
 
 ```env
+AIRFLOW_NIGHTLY_CRON=15 2 * * 1-5
+  # Scheduler cadence (UTC)
+
+AIRFLOW_NIGHTLY_MIN_REQUIRED=20
+  # Minimum rows expected after nightly run
+
 AIRFLOW_NIGHTLY_FETCH_MIN_VALID=50
   # Stop after N valid rows (heavy threshold)
 
-AIRFLOW_NIGHTLY_RETRIES=4
+AIRFLOW_NIGHTLY_PROVIDER_RETRIES=4
   # Max retries per chunk (more aggressive than intraday)
 
-AIRFLOW_NIGHTLY_CHUNK_SIZE=8
-  # Same batch size as intraday
+AIRFLOW_NIGHTLY_PROVIDER_RETRY_DELAY_SECONDS=3
+  # Delay in seconds between retries
 ```
 
 ## Optional Provider Keys

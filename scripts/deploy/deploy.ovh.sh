@@ -2,7 +2,11 @@
 set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 MODE="${1:-docker}"
-ENV_FILE="${2:-$ROOT_DIR/scripts/deploy/env.ovh.example}"
+DEFAULT_ENV_FILE="$ROOT_DIR/deploy/scripts/env.ovh"
+if [ ! -f "$DEFAULT_ENV_FILE" ]; then
+  DEFAULT_ENV_FILE="$ROOT_DIR/deploy/scripts/env.ovh.example"
+fi
+ENV_FILE="${2:-$DEFAULT_ENV_FILE}"
 
 if [ ! -f "$ENV_FILE" ]; then
   echo "Missing env file: $ENV_FILE" >&2

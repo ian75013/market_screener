@@ -1,13 +1,14 @@
 # Market Screener - OVH VPS Deployment Guide
 
-This project includes deployment scripts for a Docker-based OVH VPS setup.
+This is the authoritative OVH deployment flow for Market Screener.
 
 ## Files
 
-- `scripts/sync_to_vps.sh`: synchronize the repository and `.env` to the VPS
-- `scripts/deploy_market_screener_ovh.sh`: full remote deployment helper
+- `scripts/deploy/deploy.ovh.sh`: production OVH wrapper
+- `scripts/deploy/deploy.sh`: deployment engine with port preflight and fail-fast behavior
 - `deploy/docker-compose.ovh.yml`: production OVH/VPS compose override
-- `deploy/scripts/env.ovh.example`: deployment variables example
+- `deploy/scripts/env.ovh`: authoritative production env file
+- `deploy/scripts/env.ovh.example`: production env template
 - `deploy/scripts/install_apache_site.sh`: Apache reverse proxy installer
 
 ## Recommended Flow
@@ -34,7 +35,7 @@ VITE_API_URL=https://api.market.screener.doctumconsilium.com/api/v1
 AIRFLOW_BIND_DOMAIN=doctumconsilium.com
 AIRFLOW_BIND_HOST=10.8.0.1
 AIRFLOW_REQUIRE_VPN=true
-AIRFLOW_PORT=8088
+AIRFLOW_PORT=18088
 APACHE_AUTOCONFIG=true
 CERTBOT_AUTOCONFIG=true
 CERTBOT_EMAIL=admin@doctumconsilium.com
@@ -45,7 +46,7 @@ ROLLBACK_ON_FAILURE=true
 3. Run the deployment:
 
 ```bash
-./scripts/deploy_market_screener_ovh.sh deploy/scripts/env.ovh
+bash scripts/deploy/deploy.ovh.sh docker deploy/scripts/env.ovh
 ```
 
 ## Sync Only
@@ -62,7 +63,7 @@ ROLLBACK_ON_FAILURE=true
 ## What The Deploy Script Does
 
 - Syncs the repository to the remote VPS
-- Transfers the selected `.env` file securely
+- Transfers the selected env file securely to remote `.env`
 - Installs Docker Engine and Docker Compose plugin if missing
 - Starts the stack with:
 
@@ -114,7 +115,7 @@ Example:
 
 ```bash
 AIRFLOW_BIND_HOST=10.8.0.1
-AIRFLOW_PORT=8088
+AIRFLOW_PORT=18088
 ```
 
 You can also let the deploy script infer the IP from DNS:
@@ -129,3 +130,9 @@ The script resolves the IPv4 from DNS and uses it as bind host for Airflow.
 Important: with `AIRFLOW_REQUIRE_VPN=true`, deployment fails if the resolved/bound IP is not in private/VPN ranges (`10.0.0.0/8`, `172.16.0.0/12`, `192.168.0.0/16`, `100.64.0.0/10`).
 
 With that configuration, Airflow is reachable only through the VPN network.
+
+The `deploy/scripts/env.ovh` file is the single source of truth for OVH production:
+
+- deploy-control variables
+- runtime container variables
+- Airflow schedule and enrichment tuning
