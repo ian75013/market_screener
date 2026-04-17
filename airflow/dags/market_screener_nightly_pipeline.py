@@ -7,7 +7,7 @@ import requests
 from airflow import DAG
 from airflow.operators.python import PythonOperator
 
-BACKEND_URL = "http://backend:8000"
+BACKEND_URL = "http://market-screener-backend:8000"
 PIPELINE_ENDPOINT = f"{BACKEND_URL}/api/v1/admin/pipeline/run"
 FILTERS_ENDPOINT = f"{BACKEND_URL}/api/v1/filters"
 STATS_ENDPOINT = f"{BACKEND_URL}/api/v1/stats"
