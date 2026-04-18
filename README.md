@@ -183,6 +183,17 @@ For the OVH VPS deployment workflow and scripts, including Apache + Certbot auto
 
 For a complete consolidated technical recap (local + OVH + OpenVPN + Airflow + retries/fallback), see [DEPLOYMENT_OVH_AIRFLOW_PIPELINE.md](DEPLOYMENT_OVH_AIRFLOW_PIPELINE.md).
 
+### Shared K3s deployment (production priority)
+
+For production, prefer the shared K3s platform over standalone Docker deployment.
+
+- Cluster source of truth: `../k3s-fromOVHVps/deploy/platform/50-market-screener.template.yaml`
+- Full platform bootstrap: `../k3s-fromOVHVps/scripts/bootstrap_k3s_multi_app_platform.sh`
+- Iterative rollout: `../k3s-fromOVHVps/scripts/build_and_push_workspace_images.sh` then `../k3s-fromOVHVps/scripts/deploy_workspace_apps_to_k3s.sh`
+- Public entrypoints: `https://market.screener.doctumconsilium.com` and `https://api.market.screener.doctumconsilium.com`
+
+Use Docker Compose for local development and troubleshooting. Use the K3s platform repo for production ingress, TLS, rollout, and multi-app operations.
+
 ## Architecture
 
 ### Backend (FastAPI + SQLAlchemy + PostgreSQL)

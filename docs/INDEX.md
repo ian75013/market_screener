@@ -84,7 +84,39 @@ Fundamentals Daemon (ongoing):
   3. Provider priority: yfinance (primary) → Finnhub (fallback on rate-limit)
 ```
 
-## 📁 Structure des Fichiers
+## � Documentation complète
+
+### Racine du projet
+
+| Fichier | Description |
+|---------|-------------|
+| [../README.md](../README.md) | Guide d'introduction et quick start |
+| [../ARCHITECTURE.md](../ARCHITECTURE.md) | Vue d'ensemble architecture (racine) |
+| [../PROJECT_DOCUMENTATION.md](../PROJECT_DOCUMENTATION.md) | Documentation technique complète |
+| [../REFACTORING.md](../REFACTORING.md) | Historique des refactorisations et décisions |
+| [../ROADMAP.md](../ROADMAP.md) | Roadmap générale du projet (racine) |
+| [../DEPLOYMENT_OVH_AIRFLOW_PIPELINE.md](../DEPLOYMENT_OVH_AIRFLOW_PIPELINE.md) | Déploiement OVH pipeline Airflow |
+| [../scripts/DEPLOYMENT_GUIDE.md](../scripts/DEPLOYMENT_GUIDE.md) | Guide d'automatisation du déploiement |
+
+### Documentation (`docs/`)
+
+| Fichier | Description |
+|---------|-------------|
+| [ARCHITECTURE.md](ARCHITECTURE.md) | Architecture détaillée du système |
+| [ROADMAP.md](ROADMAP.md) | Historique et milestones |
+| [FUNDAMENTALS_ENRICHMENT.md](FUNDAMENTALS_ENRICHMENT.md) | Enrichissement fondamentaux (PER, PBR, ROE) avec yfinance/Finnhub |
+| [SCHEDULED_REFRESH.md](SCHEDULED_REFRESH.md) | Pipelines Airflow intraday/nightly |
+| [API_ENDPOINTS.md](API_ENDPOINTS.md) | Endpoints REST disponibles |
+| [DEPLOYMENT.md](DEPLOYMENT.md) | Déploiement local, Docker Compose, OVH |
+| [ENVIRONMENT_VARIABLES.md](ENVIRONMENT_VARIABLES.md) | Variables d'environnement, configuration |
+| [ENV_FILES.md](ENV_FILES.md) | Fichiers `.env`, secrets, templates |
+| [TROUBLESHOOTING.md](TROUBLESHOOTING.md) | Diagnostics courants et solutions |
+| [INCIDENT_REPORT_2026-04-11_OVH_DEPLOYMENT.md](INCIDENT_REPORT_2026-04-11_OVH_DEPLOYMENT.md) | Post-mortem déploiement OVH 11 avril 2026 |
+| [AGENT_DEPLOYMENT_GUARDRAILS.md](AGENT_DEPLOYMENT_GUARDRAILS.md) | Règles de sécurité pour agents IA |
+
+---
+
+## �📁 Structure des Fichiers
 
 ```
 market_screener/
