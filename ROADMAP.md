@@ -381,3 +381,19 @@ Priority: Low | Status: Proposed
 - ⏳ Secondary provider implementation (resilience feature for sustained Yahoo outages)
 - ⏳ Prometheus metrics integration (observability enhancement)
 - ⏳ Advanced scheduling profiles (sector-specific cadences)
+
+## Execution Log — 2026-05-08
+
+### Guardrails Propagation
+
+- Added/updated `CLAUDE.md` and `GEMINI.md` for multi-AI assistant compatibility
+- Updated `.github/copilot-instructions.md` with:
+  - Code documentation standard (pydoc/JSDoc/XML/shell headers)
+  - Secret management protocol (ECR 12h rotation, k8s pull secrets)
+  - tmux sessions mandatory for critical operations
+- ECR secrets agent available at `.github/agents/ecr-secrets-agent.agent.md`
+- guardrails-kit templates updated: `CLAUDE.template.md`, `GEMINI.template.md`
+
+## Rollback
+- All changes are documentation-only and non-breaking.
+- Revert any file via `git checkout HEAD~1 -- <file>`.

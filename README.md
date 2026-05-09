@@ -560,3 +560,8 @@ See LICENSE for full terms.
 ## Support & Issues
 
 Report issues, request features, or ask questions on the project repository.
+
+## How This Project Works (Operations)
+- Runtime and infra details are documented in [INFRASTRUCTURE.md](INFRASTRUCTURE.md).
+- Start from the local run section, then use the deployment section for production updates.
+- Keep changes reversible and validate health checks after rollout.

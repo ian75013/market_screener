@@ -1,0 +1,166 @@
+\documentclass[11pt,a4paper]{article}
+\usepackage[T1]{fontenc}
+\usepackage[utf8]{inputenc}
+\usepackage[english]{babel}
+\usepackage{lmodern}
+\usepackage{microtype}
+\usepackage{geometry}
+\geometry{margin=2.5cm}
+\usepackage{hyperref}
+\hypersetup{
+    colorlinks=true,
+    linkcolor=blue!70!black,
+    urlcolor=blue!70!black,
+    citecolor=blue!70!black
+}
+\usepackage{booktabs}
+\usepackage{longtable}
+\usepackage{enumitem}
+\usepackage{xcolor}
+\usepackage{titlesec}
+\usepackage{fancyhdr}
+\usepackage{graphicx}
+\usepackage{listings}
+
+\definecolor{codegray}{rgb}{0.95,0.95,0.95}
+\definecolor{doctum}{rgb}{0.10,0.30,0.60}
+
+\lstset{
+  backgroundcolor=\color{codegray},
+  basicstyle=\small\ttfamily,
+  breaklines=true,
+  frame=single,
+  rulecolor=\color{gray!40},
+  xleftmargin=1em,
+  framexleftmargin=0.5em
+}
+
+\pagestyle{fancy}
+\fancyhf{}
+\fancyhead[L]{\textcolor{doctum}{\small\textbf{Doctum Consilium}}}
+\fancyhead[R]{\small\nouppercase{\leftmark}}
+\fancyfoot[C]{\thepage}
+
+\titleformat{\section}{\large\bfseries\color{doctum}}{}{0em}{}[\titlerule]
+\titleformat{\subsection}{\normalsize\bfseries\color{doctum!80}}{}{0em}{}
+
+
+\begin{document}
+
+\title{
+  \textcolor{doctum}{\Large\textbf{Market Screener}} \\[0.5em]
+  \large Multi-Source Stock Screener with Airflow Pipeline and AI Analysis \\[0.3em]
+  \normalsize Technical Foundations and Architecture
+}
+\author{Doctum Consilium \\ \small\textit{Generated 2026-05-08}}
+\date{}
+\maketitle
+\thispagestyle{fancy}
+
+\begin{abstract}
+Automated stock screener with intraday and nightly Airflow pipelines, FastAPI backend, Yahoo Finance and Alpaca connectors, and AI-powered analysis.
+This document covers the theoretical foundations, architectural decisions,
+and key technical concepts required to understand, contribute to, and
+maintain this repository.
+\end{abstract}
+
+\tableofcontents
+\newpage
+
+\section{Overview}
+
+Market Screener automates the identification of trading opportunities by
+running configurable screening rules across a universe of instruments.
+Two Airflow pipelines run on distinct schedules: intraday (real-time signals)
+and nightly (batch scoring and database refresh).
+
+The backend exposes a REST API for queried results, and the AI analysis
+module generates natural-language summaries of screener output.
+
+
+\section{Architecture}
+
+\begin{verbatim}
+Airflow Scheduler
+├── Intraday DAG  → Yahoo Finance / Alpaca fetch
+│                 → Apply screening rules
+│                 → Write to PostgreSQL
+└── Nightly DAG   → Historical scoring
+                  → AI analysis (LiteLLM)
+                  → Dashboard refresh
+
+FastAPI backend ──► PostgreSQL ──► React frontend
+\end{verbatim}
+
+
+\section{Key Technical Concepts}
+\begin{itemize}[leftmargin=1.5em]
+  \item Technical indicators: RSI $= 100 - \frac{100}{1 + RS}$ where $RS = \frac{\text{avg gain}}{\text{avg loss}}$; MACD $= \text{EMA}_{12} - \text{EMA}_{26}$; Bollinger Bands $= \mu \pm 2\sigma$ over rolling window.
+  \item Airflow DAG design: idempotent tasks, catchup=False for live data, task retries with exponential backoff.
+  \item Database schema: time-series table with (symbol, timestamp, OHLCV, indicators); partitioned by date for query performance.
+  \item Screening rules: configurable filter chains; e.g.\ RSI $< 30$ AND price $>$ 50-day MA AND volume spike.
+\end{itemize}
+
+\section{Data Flow}
+
+Airflow DAG trigger → Yahoo Finance REST → OHLCV normalisation →
+Technical indicator calculation → Screening rule application →
+PostgreSQL upsert → FastAPI read → React display.
+
+
+\section{Technology Stack}
+
+\begin{tabular}{ll}
+\toprule
+\textbf{Component} & \textbf{Technology} \\
+\midrule
+Orchestration & Apache Airflow 2.x \\
+Data sources & yfinance, Alpaca Market Data API \\
+Indicators & pandas-ta, TA-Lib \\
+Database & PostgreSQL \\
+API & FastAPI \\
+AI analysis & LiteLLM \\
+\bottomrule
+\end{tabular}
+
+
+\section{Design Decisions}
+
+\begin{itemize}
+  \item Two separate DAGs (intraday vs.\ nightly) to isolate latency-sensitive
+    real-time paths from batch operations.
+  \item yfinance as primary source (free); Alpaca as fallback for real-time data
+    requiring an API key.
+\end{itemize}
+
+
+\section{Repository Structure}
+\begin{lstlisting}[language=bash,caption={Top-level directory layout}]
+market_screener/
+  .github/
+    copilot-instructions.md   # GitHub Copilot guardrails
+    agents/
+      ecr-secrets-agent.agent.md  # ECR secret rotation runbook
+  CLAUDE.md                   # Claude Code guardrails
+  GEMINI.md                   # Gemini CLI guardrails
+  INFRASTRUCTURE.md           # Operational runbook
+  ROADMAP.md                  # Execution log and roadmap
+  README.md                   # Project overview
+\end{lstlisting}
+
+\section{Contributing}
+\begin{enumerate}
+  \item Read \texttt{README.md}, \texttt{INFRASTRUCTURE.md}, and \texttt{ROADMAP.md} before any task.
+  \item Follow the Code Documentation Standard: every public function must have
+    a docstring (Google-style for Python, JSDoc for TypeScript, XML for C\#).
+  \item Run the guardrails validator before committing:
+    \begin{lstlisting}[language=bash]
+git add -A && ./.guardrails/bin/validate_guardrails.sh
+    \end{lstlisting}
+  \item For deployment or destructive operations, always use a named tmux session:
+    \begin{lstlisting}[language=bash]
+tmux new-session -A -s deploy-market_screener
+    \end{lstlisting}
+\end{enumerate}
+
+\end{document}
