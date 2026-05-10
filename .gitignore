@@ -492,3 +492,11 @@ sketch
 .ionide
 
 # End of https://www.toptal.com/developers/gitignore/api/react,python,visualstudiocode,django,node
+# LaTeX auxiliary files
+*.aux
+*.log
+*.out
+*.toc
+*.fls
+*.fdb_latexmk
+*.synctex.gz
