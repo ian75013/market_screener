@@ -18,7 +18,16 @@ RUN npm cache clean --force && npm install
 COPY index.html ./
 COPY vite.config.js ./
 COPY src ./src
-COPY public ./public
+
+# `public/` n'existe pas dans ce dépôt et n'y a jamais existé : la ligne
+# `COPY public ./public` faisait échouer toute reconstruction avec
+# « /public: not found ». L'image qui tourne en production date du 2026-04-16 et
+# était donc IRREPRODUCTIBLE — constaté le 2026-08-02 en tentant de la rebâtir.
+#
+# Vite n'exige pas ce répertoire : il ne sert qu'à copier des fichiers tels quels
+# (favicon, robots.txt…) vers la racine du site. On le crée vide pour que l'outil
+# le trouve, et il suffira d'y déposer des fichiers le jour où le besoin apparaît.
+RUN mkdir -p public
 
 # Build the optimized production bundle
 RUN npm run build
